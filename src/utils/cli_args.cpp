@@ -10,9 +10,9 @@ namespace cli_args {
 void PrintUsage(const char* argv0, std::ostream& os) {
 	os
 		<< "Cach dung:\n"
-		<< "  " << argv0 << " --image <duong_dan_anh.jpg>\n\n"
+		<< "  " << argv0 << " --image <duong_dan_anh.jpg> [--show]\n\n"
 		<< "  " << argv0 << " --folder <duong_dan_thu_muc_anh>\n\n"
-		<< "  " << argv0 << " --video <duong_dan_video.mp4>\n\n"
+		<< "  " << argv0 << " --video <duong_dan_video.mp4> [--show]\n\n"
 		<< "Ghi chu:\n"
 		<< "  - Pipeline: vehicle_detection (YOLO26 NMS-free) -> plate_detection (YOLO26 NMS-free, batch) -> OCR plate (batch)\n"
 		<< "  - Models (fix cung trong app_config.h):\n"
@@ -21,7 +21,8 @@ void PrintUsage(const char* argv0, std::ostream& os) {
 		<< "      ocr    : " << app_config::kOcrModelPath << "\n"
 		<< "  - OCR preprocess: crop bien so -> RGB -> resize (" << app_config::kInputW << "x" << app_config::kInputH << ") -> uint8 NHWC\n"
 		<< "  - Output image/folder: ghi anh <ten>_annotated.jpg va in cac bbox + text ra stdout\n"
-		<< "  - Output video: ghi video <ten>_annotated.mp4, co overlay FPS goc tren ben trai\n";
+		<< "  - Output video: ghi video <ten>_annotated.mp4, co overlay FPS goc tren ben trai\n"
+		<< "  - --show: hien thi cua so output trong luc xu ly (video: bam q/ESC de thoat som)\n";
 }
 
 Options Parse(int argc, char** argv) {
@@ -34,6 +35,10 @@ Options Parse(int argc, char** argv) {
 			opt.folder_path = argv[++i];
 		} else if ((a == "--video" || a == "-v") && i + 1 < argc) {
 			opt.video_path = argv[++i];
+		} else if (a == "--show") {
+			opt.show = true;
+		} else if (a == "--no-show") {
+			opt.show = false;
 		} else if (a == "--help" || a == "-h") {
 			opt.show_help = true;
 			return opt;

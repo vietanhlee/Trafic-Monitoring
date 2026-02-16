@@ -15,6 +15,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+#include <opencv2/highgui.hpp>
 
 #include "app_config.h"
 #include "brand_classifier.h"
@@ -318,7 +319,8 @@ int ProcessOneImage(
 	Ort::Session& vehicle_sess,
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
-	const fs::path& brand_model_path) {
+	const fs::path& brand_model_path,
+	bool show_output) {
 	if (!fs::exists(image_path)) {
 		std::cerr << "Khong tim thay anh: " << image_path.string() << "\n";
 		return 1;
@@ -342,6 +344,16 @@ int ProcessOneImage(
 		throw std::runtime_error("Khong ghi duoc anh output: " + out_path.string());
 	}
 	std::cout << "Da ghi output: " << out_path.string() << "\n";
+
+	if (show_output) {
+		const std::string window_name = "OCR Plate - Image Output";
+		cv::namedWindow(window_name, cv::WINDOW_NORMAL);
+		cv::resizeWindow(window_name, 1200, 800);
+		cv::imshow(window_name, bgr);
+		std::cout << "Nhan phim bat ky de dong cua so hien thi...\n";
+		cv::waitKey(0);
+		cv::destroyWindow(window_name);
+	}
 	return 0;
 }
 
@@ -352,7 +364,8 @@ int ProcessOneVideo(
 	Ort::Session& vehicle_sess,
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
-	const fs::path& brand_model_path) {
+	const fs::path& brand_model_path,
+	bool show_output) {
 	if (!fs::exists(video_path)) {
 		std::cerr << "Khong tim thay video: " << video_path.string() << "\n";
 		return 1;
@@ -365,6 +378,11 @@ int ProcessOneVideo(
 
 	std::cout << "=== Xu ly video: " << video_path.string() << " ===\n";
 	fs::create_directories(kOutputDir);
+	const std::string window_name = "OCR Plate - Video Output";
+	if (show_output) {
+		cv::namedWindow(window_name, cv::WINDOW_NORMAL);
+		cv::resizeWindow(window_name, 1200, 800);
+	}
 
 	cv::Mat frame;
 	if (!cap.read(frame) || frame.empty()) {
@@ -401,7 +419,18 @@ int ProcessOneVideo(
 
 		DrawFps(annotated, fps);
 		writer.write(annotated);
+		if (show_output) {
+			cv::imshow(window_name, annotated);
+		}
 		++frame_count;
+
+		if (show_output) {
+			const int key = cv::waitKey(1);
+			if (key == 27 || key == 'q' || key == 'Q') {
+				std::cout << "Dung som theo yeu cau nguoi dung (q/ESC)\n";
+				break;
+			}
+		}
 
 		if (frame_count % 30 == 0) {
 			std::cout << "Da xu ly " << frame_count << " frame\n";
@@ -410,6 +439,9 @@ int ProcessOneVideo(
 		if (!cap.read(frame) || frame.empty()) {
 			break;
 		}
+	}
+	if (show_output) {
+		cv::destroyWindow(window_name);
 	}
 
 	std::cout << "Da ghi output video: " << out_path.string() << " (" << frame_count << " frame)\n";
@@ -425,6 +457,7 @@ int main(int argc, char** argv) {
 		fs::path image_path;
 		fs::path folder_path;
 		fs::path video_path;
+		bool show_output = false;
 		try {
 			const auto opt = cli_args::Parse(argc, argv);
 			if (opt.show_help) {
@@ -434,6 +467,7 @@ int main(int argc, char** argv) {
 			image_path = opt.image_path;
 			folder_path = opt.folder_path;
 			video_path = opt.video_path;
+			show_output = opt.show;
 		} catch (const std::exception& e) {
 			std::cerr << e.what() << "\n";
 			cli_args::PrintUsage(argv[0], std::cout);
@@ -499,7 +533,7 @@ int main(int argc, char** argv) {
 			int err_count = 0;
 			for (const auto& p : image_paths) {
 				try {
-					const int rc = ProcessOneImage(p, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path);
+					const int rc = ProcessOneImage(p, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path, show_output);
 					if (rc != 0) {
 						++err_count;
 					}
@@ -513,10 +547,10 @@ int main(int argc, char** argv) {
 		}
 
 		if (!video_path.empty()) {
-			return ProcessOneVideo(video_path, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path);
+			return ProcessOneVideo(video_path, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path, show_output);
 		}
 
-		return ProcessOneImage(image_path, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path);
+		return ProcessOneImage(image_path, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path, show_output);
 	} catch (const std::exception& e) {
 		std::cerr << "Loi: " << e.what() << "\n";
 		return 1;
