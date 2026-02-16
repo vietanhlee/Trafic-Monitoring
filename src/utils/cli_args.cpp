@@ -12,6 +12,7 @@ void PrintUsage(const char* argv0, std::ostream& os) {
 		<< "Cach dung:\n"
 		<< "  " << argv0 << " --image <duong_dan_anh.jpg>\n\n"
 		<< "  " << argv0 << " --folder <duong_dan_thu_muc_anh>\n\n"
+		<< "  " << argv0 << " --video <duong_dan_video.mp4>\n\n"
 		<< "Ghi chu:\n"
 		<< "  - Pipeline: vehicle_detection (YOLO26 NMS-free) -> plate_detection (YOLO26 NMS-free, batch) -> OCR plate (batch)\n"
 		<< "  - Models (fix cung trong app_config.h):\n"
@@ -19,7 +20,8 @@ void PrintUsage(const char* argv0, std::ostream& os) {
 		<< "      plate  : " << app_config::kPlateModelPath << "\n"
 		<< "      ocr    : " << app_config::kOcrModelPath << "\n"
 		<< "  - OCR preprocess: crop bien so -> RGB -> resize (" << app_config::kInputW << "x" << app_config::kInputH << ") -> uint8 NHWC\n"
-		<< "  - Output: ghi anh <ten>_annotated.jpg va in cac bbox + text ra stdout\n";
+		<< "  - Output image/folder: ghi anh <ten>_annotated.jpg va in cac bbox + text ra stdout\n"
+		<< "  - Output video: ghi video <ten>_annotated.mp4, co overlay FPS goc tren ben trai\n";
 }
 
 Options Parse(int argc, char** argv) {
@@ -30,6 +32,8 @@ Options Parse(int argc, char** argv) {
 			opt.image_path = argv[++i];
 		} else if ((a == "--folder" || a == "-f") && i + 1 < argc) {
 			opt.folder_path = argv[++i];
+		} else if ((a == "--video" || a == "-v") && i + 1 < argc) {
+			opt.video_path = argv[++i];
 		} else if (a == "--help" || a == "-h") {
 			opt.show_help = true;
 			return opt;
@@ -38,10 +42,14 @@ Options Parse(int argc, char** argv) {
 		}
 	}
 
-	if (!opt.image_path.empty() && !opt.folder_path.empty()) {
-		throw std::runtime_error("Chi duoc dung mot trong hai tham so: --image hoac --folder");
+	int mode_count = 0;
+	mode_count += opt.image_path.empty() ? 0 : 1;
+	mode_count += opt.folder_path.empty() ? 0 : 1;
+	mode_count += opt.video_path.empty() ? 0 : 1;
+	if (mode_count > 1) {
+		throw std::runtime_error("Chi duoc dung mot trong ba tham so: --image hoac --folder hoac --video");
 	}
-	if (opt.image_path.empty() && opt.folder_path.empty()) {
+	if (mode_count == 0) {
 		// giu hanh vi cu: cho phep fallback anh mac dinh trong main
 	}
 	return opt;

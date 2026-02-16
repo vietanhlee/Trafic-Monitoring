@@ -5,7 +5,7 @@
 namespace app_config {
 
 // Đường dẫn model
-inline constexpr const char* kOcrModelPath = "../model/model_ocr_plate.onnx";
+inline constexpr const char* kOcrModelPath = "../model/model.onnx";
 inline constexpr const char* kVehicleModelPath = "../model/vehicle_detection.onnx";
 inline constexpr const char* kPlateModelPath = "../model/plate_detection.onnx";
 inline constexpr const char* kBrandCarModelPath = "../model/brand_car_classification.onnx";
@@ -23,8 +23,8 @@ inline constexpr int kBrandInputH = 224;
 inline constexpr int kBrandInputW = 224;
 
 // Ngưỡng confidence (YOLO26 là NMS-free end-to-end, chỉ cần lọc theo score)
-inline constexpr float kVehicleConfThresh = 0.3f;
-inline constexpr float kPlateConfThresh = 0.5f;
+inline constexpr float kVehicleConfThresh = 0.4f;
+inline constexpr float kPlateConfThresh = 0.4f;
 inline constexpr float kOcrConfAvgThresh = 0.60f;
 
 // Ký tự cuối '_' là blank cho CTC.

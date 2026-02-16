@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <cmath>
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -13,6 +14,7 @@
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 
 #include "app_config.h"
 #include "brand_classifier.h"
@@ -135,42 +137,59 @@ void DrawVehicle(cv::Mat& bgr, const yolo26_nmsfree::Detection& det, bool has_pl
 	cv::putText(bgr, label, cv::Point(x + 2, y), cv::FONT_HERSHEY_SIMPLEX, font_scale, cv::Scalar(255, 255, 255), thickness);
 }
 
-} // namespace
+void DrawFps(cv::Mat& bgr, double fps) {
+	char fps_buf[64];
+	std::snprintf(fps_buf, sizeof(fps_buf), "FPS: %.2f", fps);
+	const std::string label = fps_buf;
 
-int ProcessOneImage(
-	const fs::path& image_path,
+	int baseline = 0;
+	const double font_scale = 0.8;
+	const int thickness = 2;
+	const auto sz = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, font_scale, thickness, &baseline);
+	const int margin = 8;
+	const int x = margin;
+	const int y = margin + sz.height;
+
+	cv::rectangle(
+		bgr,
+		cv::Rect(x - 4, y - sz.height - 4, sz.width + 8, sz.height + baseline + 8),
+		cv::Scalar(0, 0, 0),
+		cv::FILLED);
+	cv::putText(
+		bgr,
+		label,
+		cv::Point(x, y + baseline / 2),
+		cv::FONT_HERSHEY_SIMPLEX,
+		font_scale,
+		cv::Scalar(0, 255, 255),
+		thickness);
+}
+
+bool AnnotateFrame(
+	cv::Mat& bgr,
 	Ort::Env& env,
 	Ort::SessionOptions& sess_options,
 	Ort::Session& vehicle_sess,
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
-	const fs::path& brand_model_path) {
-	if (!fs::exists(image_path)) {
-		std::cerr << "Khong tim thay anh: " << image_path.string() << "\n";
-		return 1;
-	}
-
-	cv::Mat bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
-	if (bgr.empty()) {
-		std::cerr << "Khong doc duoc anh: " << image_path.string() << "\n";
-		return 1;
-	}
-
-	std::cout << "=== Xu ly anh: " << image_path.string() << " ===\n";
-	fs::create_directories(kOutputDir);
-
+	const fs::path& brand_model_path,
+	bool verbose) {
 	auto vehicles_batch = yolo26_nmsfree::RunBatch(vehicle_sess, {bgr}, app_config::kVehicleConfThresh);
 	const auto& vehicles = vehicles_batch.at(0);
 	if (vehicles.empty()) {
-		std::cout << "Khong phat hien phuong tien\n";
-		return 0;
+		if (verbose) {
+			std::cout << "Khong phat hien phuong tien\n";
+		}
+		return false;
 	}
-	for (size_t i = 0; i < vehicles.size(); ++i) {
-		std::cout
-			<< "vehicle " << i
-			<< ": cls=" << vehicles[i].cls << "(" << VehicleClassName(vehicles[i].cls) << ")"
-			<< " conf=" << vehicles[i].score
-			<< " box=[" << vehicles[i].x1 << "," << vehicles[i].y1 << "," << vehicles[i].x2 << "," << vehicles[i].y2 << "]\n";
+	if (verbose) {
+		for (size_t i = 0; i < vehicles.size(); ++i) {
+			std::cout
+				<< "vehicle " << i
+				<< ": cls=" << vehicles[i].cls << "(" << VehicleClassName(vehicles[i].cls) << ")"
+				<< " conf=" << vehicles[i].score
+				<< " box=[" << vehicles[i].x1 << "," << vehicles[i].y1 << "," << vehicles[i].x2 << "," << vehicles[i].y2 << "]\n";
+		}
 	}
 
 	std::vector<cv::Mat> vehicle_crops;
@@ -189,8 +208,10 @@ int ProcessOneImage(
 		vehicles_used.push_back(v);
 	}
 	if (vehicle_crops.empty()) {
-		std::cout << "Khong co crop phuong tien hop le\n";
-		return 0;
+		if (verbose) {
+			std::cout << "Khong co crop phuong tien hop le\n";
+		}
+		return false;
 	}
 
 	std::vector<brand_classifier::BrandResult> brand_results(vehicle_crops.size());
@@ -220,11 +241,13 @@ int ProcessOneImage(
 			brand_results[i] = brand_futures[i].get();
 		}
 	}
-	for (size_t i = 0; i < brand_results.size(); ++i) {
-		std::cout
-			<< "vehicle " << i
-			<< ": brand=" << brand_results[i].class_id << "(" << BrandClassName(brand_results[i].class_id) << ")"
-			<< " brand_conf=" << brand_results[i].conf << "\n";
+	if (verbose) {
+		for (size_t i = 0; i < brand_results.size(); ++i) {
+			std::cout
+				<< "vehicle " << i
+				<< ": brand=" << brand_results[i].class_id << "(" << BrandClassName(brand_results[i].class_id) << ")"
+				<< " brand_conf=" << brand_results[i].conf << "\n";
+		}
 	}
 
 	auto plates_per_vehicle = yolo26_nmsfree::RunBatch(plate_sess, vehicle_crops, app_config::kPlateConfThresh);
@@ -253,14 +276,13 @@ int ProcessOneImage(
 		}
 	}
 	if (plate_rgb_ocr.empty()) {
-		std::cout << "Khong phat hien bien so\n";
-		for (size_t i = 0; i < vehicles_used.size(); ++i) {
-			DrawVehicle(bgr, vehicles_used[i], /*has_plate=*/false, brand_results[i].class_id);
+		if (verbose) {
+			std::cout << "Khong phat hien bien so\n";
 		}
-		const fs::path out_path = kOutputDir / (image_path.stem().string() + "_annotated.jpg");
-		cv::imwrite(out_path.string(), bgr);
-		std::cout << "Da ghi output: " << out_path.string() << "\n";
-		return 0;
+		for (size_t i = 0; i < vehicles_used.size(); ++i) {
+			DrawVehicle(bgr, vehicles_used[i], false, brand_results[i].class_id);
+		}
+		return true;
 	}
 
 	auto texts = ocr_batch::RunBatch(ocr_sess, plate_rgb_ocr, app_config::kAlphabet);
@@ -274,12 +296,45 @@ int ProcessOneImage(
 
 	for (size_t i = 0; i < texts.size(); ++i) {
 		DrawPlate(bgr, plate_boxes_in_image[i], texts[i].text, texts[i].conf_avg);
-		std::cout
-			<< "plate " << i
-			<< ": text=" << texts[i].text
-			<< " plate_conf=" << plate_boxes_in_image[i].score
-			<< " ocr_conf_avg=" << texts[i].conf_avg
-			<< " box=[" << plate_boxes_in_image[i].x1 << "," << plate_boxes_in_image[i].y1 << "," << plate_boxes_in_image[i].x2 << "," << plate_boxes_in_image[i].y2 << "]\n";
+		if (verbose) {
+			std::cout
+				<< "plate " << i
+				<< ": text=" << texts[i].text
+				<< " plate_conf=" << plate_boxes_in_image[i].score
+				<< " ocr_conf_avg=" << texts[i].conf_avg
+				<< " box=[" << plate_boxes_in_image[i].x1 << "," << plate_boxes_in_image[i].y1 << "," << plate_boxes_in_image[i].x2 << "," << plate_boxes_in_image[i].y2 << "]\n";
+		}
+	}
+
+	return true;
+}
+
+} // namespace
+
+int ProcessOneImage(
+	const fs::path& image_path,
+	Ort::Env& env,
+	Ort::SessionOptions& sess_options,
+	Ort::Session& vehicle_sess,
+	Ort::Session& plate_sess,
+	Ort::Session& ocr_sess,
+	const fs::path& brand_model_path) {
+	if (!fs::exists(image_path)) {
+		std::cerr << "Khong tim thay anh: " << image_path.string() << "\n";
+		return 1;
+	}
+
+	cv::Mat bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
+	if (bgr.empty()) {
+		std::cerr << "Khong doc duoc anh: " << image_path.string() << "\n";
+		return 1;
+	}
+
+	std::cout << "=== Xu ly anh: " << image_path.string() << " ===\n";
+	fs::create_directories(kOutputDir);
+
+	if (!AnnotateFrame(bgr, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path, true)) {
+		return 0;
 	}
 
 	const fs::path out_path = kOutputDir / (image_path.stem().string() + "_annotated.jpg");
@@ -287,6 +342,77 @@ int ProcessOneImage(
 		throw std::runtime_error("Khong ghi duoc anh output: " + out_path.string());
 	}
 	std::cout << "Da ghi output: " << out_path.string() << "\n";
+	return 0;
+}
+
+int ProcessOneVideo(
+	const fs::path& video_path,
+	Ort::Env& env,
+	Ort::SessionOptions& sess_options,
+	Ort::Session& vehicle_sess,
+	Ort::Session& plate_sess,
+	Ort::Session& ocr_sess,
+	const fs::path& brand_model_path) {
+	if (!fs::exists(video_path)) {
+		std::cerr << "Khong tim thay video: " << video_path.string() << "\n";
+		return 1;
+	}
+
+	cv::VideoCapture cap(video_path.string());
+	if (!cap.isOpened()) {
+		throw std::runtime_error("Khong mo duoc video: " + video_path.string());
+	}
+
+	std::cout << "=== Xu ly video: " << video_path.string() << " ===\n";
+	fs::create_directories(kOutputDir);
+
+	cv::Mat frame;
+	if (!cap.read(frame) || frame.empty()) {
+		throw std::runtime_error("Video khong co frame hop le: " + video_path.string());
+	}
+
+	double input_fps = cap.get(cv::CAP_PROP_FPS);
+	if (input_fps <= 0.0) {
+		input_fps = 30.0;
+	}
+
+	const fs::path out_path = kOutputDir / (video_path.stem().string() + "_annotated.mp4");
+	cv::VideoWriter writer(
+		out_path.string(),
+		cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+		input_fps,
+		cv::Size(frame.cols, frame.rows));
+	if (!writer.isOpened()) {
+		throw std::runtime_error("Khong mo duoc video writer: " + out_path.string());
+	}
+
+	size_t frame_count = 0;
+	while (true) {
+		auto t0 = std::chrono::steady_clock::now();
+		cv::Mat annotated = frame.clone();
+		try {
+			AnnotateFrame(annotated, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path, false);
+		} catch (const std::exception& e) {
+			std::cerr << "Canh bao frame " << frame_count << ": " << e.what() << "\n";
+		}
+		auto t1 = std::chrono::steady_clock::now();
+		const double elapsed = std::chrono::duration<double>(t1 - t0).count();
+		const double fps = (elapsed > 0.0) ? (1.0 / elapsed) : 0.0;
+
+		DrawFps(annotated, fps);
+		writer.write(annotated);
+		++frame_count;
+
+		if (frame_count % 30 == 0) {
+			std::cout << "Da xu ly " << frame_count << " frame\n";
+		}
+
+		if (!cap.read(frame) || frame.empty()) {
+			break;
+		}
+	}
+
+	std::cout << "Da ghi output video: " << out_path.string() << " (" << frame_count << " frame)\n";
 	return 0;
 }
 
@@ -298,6 +424,7 @@ int main(int argc, char** argv) {
 		const fs::path ocr_model_path = app_config::kOcrModelPath;
 		fs::path image_path;
 		fs::path folder_path;
+		fs::path video_path;
 		try {
 			const auto opt = cli_args::Parse(argc, argv);
 			if (opt.show_help) {
@@ -306,13 +433,14 @@ int main(int argc, char** argv) {
 			}
 			image_path = opt.image_path;
 			folder_path = opt.folder_path;
+			video_path = opt.video_path;
 		} catch (const std::exception& e) {
 			std::cerr << e.what() << "\n";
 			cli_args::PrintUsage(argv[0], std::cout);
 			return 2;
 		}
 
-		if (image_path.empty() && folder_path.empty()) {
+		if (image_path.empty() && folder_path.empty() && video_path.empty()) {
 			image_path = app_config::kDefaultImagePath;
 			std::cout << "(note) Khong truyen --image, dung anh mac dinh: " << image_path.string() << "\n";
 		}
@@ -332,6 +460,11 @@ int main(int argc, char** argv) {
 		if (!folder_path.empty()) {
 			if (!fs::exists(folder_path) || !fs::is_directory(folder_path)) {
 				throw std::runtime_error("Thu muc khong hop le: " + folder_path.string());
+			}
+		}
+		if (!video_path.empty()) {
+			if (!fs::exists(video_path) || !fs::is_regular_file(video_path)) {
+				throw std::runtime_error("Video khong hop le: " + video_path.string());
 			}
 		}
 
@@ -377,6 +510,10 @@ int main(int argc, char** argv) {
 			}
 			std::cout << "Tong ket: da xu ly " << image_paths.size() << " anh, loi " << err_count << " anh\n";
 			return (err_count == 0) ? 0 : 1;
+		}
+
+		if (!video_path.empty()) {
+			return ProcessOneVideo(video_path, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path);
 		}
 
 		return ProcessOneImage(image_path, env, sess_options, vehicle_sess, plate_sess, ocr_sess, brand_model_path);

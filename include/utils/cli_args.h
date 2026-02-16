@@ -8,6 +8,7 @@ namespace cli_args {
 struct Options {
 	std::filesystem::path image_path;
 	std::filesystem::path folder_path;
+	std::filesystem::path video_path;
 	bool show_help = false;
 };
 
