@@ -1,7 +1,10 @@
 #include "brand_classifier.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include <opencv2/imgproc.hpp>
@@ -80,59 +83,125 @@ BrandResult DecodeTop1(const float* data, int64_t class_count) {
 
 } // namespace
 
+std::vector<BrandResult> ClassifyBatch(
+	Ort::Session& session,
+	const std::vector<cv::Mat>& bgr_images,
+	int input_h,
+	int input_w) {
+	if (bgr_images.empty()) {
+		return {};
+	}
+
+	const size_t total_images = bgr_images.size();
+
+	std::vector<std::vector<float>> prepared_inputs;
+	prepared_inputs.resize(total_images);
+	for (size_t i = 0; i < total_images; ++i) {
+		PrepareInputNchwFloat(bgr_images[i], input_h, input_w, prepared_inputs[i]);
+	}
+
+	auto infer_one = [&](size_t idx) -> BrandResult {
+		Ort::AllocatorWithDefaultOptions allocator;
+		auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
+		const char* input_name = input_name_alloc.get();
+		auto output_name_alloc = session.GetOutputNameAllocated(0, allocator);
+		const char* output_name = output_name_alloc.get();
+
+		std::vector<int64_t> tensor_shape = {1, 3, input_h, input_w};
+		Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+		Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+			mem_info,
+			prepared_inputs[idx].data(),
+			prepared_inputs[idx].size(),
+			tensor_shape.data(),
+			tensor_shape.size());
+
+		const std::vector<const char*> input_names = {input_name};
+		auto outputs = session.Run(
+			Ort::RunOptions{nullptr},
+			input_names.data(),
+			&input_tensor,
+			1,
+			&output_name,
+			1);
+
+		Ort::Value& out0 = outputs.at(0);
+		if (!out0.IsTensor()) {
+			throw std::runtime_error("Output brand khong phai tensor");
+		}
+		const auto out_info = out0.GetTensorTypeAndShapeInfo();
+		if (out_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+			throw std::runtime_error("Output brand can float32");
+		}
+
+		const auto out_shape = out_info.GetShape();
+		const float* data = out0.GetTensorData<float>();
+		if (out_shape.size() == 1) {
+			return DecodeTop1(data, out_shape[0]);
+		}
+		if (out_shape.size() == 2) {
+			if (out_shape[0] < 1) {
+				throw std::runtime_error("Output brand batch khong hop le");
+			}
+			return DecodeTop1(data, out_shape[1]);
+		}
+		throw std::runtime_error("Output brand rank khong hop le (can 1 hoac 2)");
+	};
+
+	std::vector<BrandResult> results(total_images);
+	if (total_images == 1) {
+		results[0] = infer_one(0);
+		return results;
+	}
+
+	const unsigned int hw_threads = std::thread::hardware_concurrency();
+	const size_t max_threads = (hw_threads > 0) ? static_cast<size_t>(hw_threads) : 4ull;
+	const size_t thread_count = std::min(total_images, std::max<size_t>(1, max_threads));
+
+	std::atomic<size_t> next_index{0};
+	std::exception_ptr worker_error = nullptr;
+	std::vector<std::thread> workers;
+	workers.reserve(thread_count);
+
+	for (size_t t = 0; t < thread_count; ++t) {
+		workers.emplace_back([&]() {
+			try {
+				while (true) {
+					const size_t idx = next_index.fetch_add(1);
+					if (idx >= total_images) {
+						break;
+					}
+					results[idx] = infer_one(idx);
+				}
+			} catch (...) {
+				if (!worker_error) {
+					worker_error = std::current_exception();
+				}
+			}
+		});
+	}
+
+	for (auto& w : workers) {
+		w.join();
+	}
+
+	if (worker_error) {
+		std::rethrow_exception(worker_error);
+	}
+
+	return results;
+}
+
 BrandResult ClassifySingle(
 	Ort::Session& session,
 	const cv::Mat& bgr_image,
 	int input_h,
 	int input_w) {
-	std::vector<float> input;
-	PrepareInputNchwFloat(bgr_image, input_h, input_w, input);
-
-	Ort::AllocatorWithDefaultOptions allocator;
-	auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
-	const char* input_name = input_name_alloc.get();
-	auto output_name_alloc = session.GetOutputNameAllocated(0, allocator);
-	const char* output_name = output_name_alloc.get();
-
-	const std::vector<int64_t> input_shape = {1, 3, input_h, input_w};
-	Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-	Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-		mem_info,
-		input.data(),
-		input.size(),
-		input_shape.data(),
-		input_shape.size());
-
-	const std::vector<const char*> input_names = {input_name};
-	auto outputs = session.Run(
-		Ort::RunOptions{nullptr},
-		input_names.data(),
-		&input_tensor,
-		1,
-		&output_name,
-		1);
-
-	Ort::Value& out0 = outputs.at(0);
-	if (!out0.IsTensor()) {
-		throw std::runtime_error("Output brand khong phai tensor");
+	auto v = ClassifyBatch(session, {bgr_image}, input_h, input_w);
+	if (v.empty()) {
+		throw std::runtime_error("ClassifySingle khong nhan duoc ket qua");
 	}
-	const auto out_info = out0.GetTensorTypeAndShapeInfo();
-	const auto out_type = out_info.GetElementType();
-	if (out_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-		throw std::runtime_error("Output brand can float32");
-	}
-	const auto out_shape = out_info.GetShape();
-	const float* data = out0.GetTensorData<float>();
-	if (out_shape.size() == 2) {
-		if (out_shape[0] != 1) {
-			throw std::runtime_error("Output brand rank2 can batch=1 khi infer don");
-		}
-		return DecodeTop1(data, out_shape[1]);
-	}
-	if (out_shape.size() == 1) {
-		return DecodeTop1(data, out_shape[0]);
-	}
-	throw std::runtime_error("Output brand rank khong hop le (can 1 hoac 2)");
+	return v.front();
 }
 
 } // namespace brand_classifier

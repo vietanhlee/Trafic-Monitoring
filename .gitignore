@@ -12,3 +12,5 @@ out
 test.cpp
 todo.md
 *.jpeg
+temp.*
+.vscode/

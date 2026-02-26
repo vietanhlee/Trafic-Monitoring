@@ -1,0 +1,319 @@
+#include "frame_annotator.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <future>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <opencv2/imgproc.hpp>
+
+#include "app_config.h"
+#include "brand_classifier.h"
+#include "image_preprocess.h"
+#include "ocr_batch.h"
+#include "yolo_detector.h"
+
+namespace {
+
+const char* VehicleClassName(int cls) {
+	switch (cls) {
+	case 0:
+		return "car";
+	case 1:
+		return "motor";
+	default:
+		return "unknown";
+	}
+}
+
+const char* BrandClassName(int brand_id) {
+	switch (brand_id) {
+	case 0: return "BMW";
+	case 1: return "ChengLong";
+	case 2: return "DongFeng";
+	case 3: return "Ford";
+	case 4: return "Hino";
+	case 5: return "Honda";
+	case 6: return "Howo";
+	case 7: return "Hyundai";
+	case 8: return "Isuzu";
+	case 9: return "Jac";
+	case 10: return "Kia";
+	case 11: return "KimLong";
+	case 12: return "Lexus";
+	case 13: return "Mazda";
+	case 14: return "Mercedes-Benz";
+	case 15: return "Mitsubishi";
+	case 16: return "Other";
+	case 17: return "Peugeot";
+	case 18: return "Samco";
+	case 19: return "Suzuki";
+	case 20: return "Thaco";
+	case 21: return "Toyota";
+	case 22: return "VinFast";
+	default: return "UnknownBrand";
+	}
+}
+
+cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
+	int ix1 = std::max(0, std::min(static_cast<int>(std::floor(x1)), w - 1));
+	int iy1 = std::max(0, std::min(static_cast<int>(std::floor(y1)), h - 1));
+	int ix2 = std::max(0, std::min(static_cast<int>(std::ceil(x2)), w - 1));
+	int iy2 = std::max(0, std::min(static_cast<int>(std::ceil(y2)), h - 1));
+	int rw = std::max(0, ix2 - ix1);
+	int rh = std::max(0, iy2 - iy1);
+	return cv::Rect(ix1, iy1, rw, rh);
+}
+
+void DrawPlate(cv::Mat& bgr, const yolo_detector::Detection& det, const std::string& text, float conf_avg) {
+	const bool is_low_ocr_conf = (conf_avg < app_config::kOcrConfAvgThresh);
+	const cv::Scalar color = is_low_ocr_conf ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
+	const cv::Point p1(static_cast<int>(det.x1), static_cast<int>(det.y1));
+	const cv::Point p2(static_cast<int>(det.x2), static_cast<int>(det.y2));
+	cv::rectangle(bgr, p1, p2, color, 2);
+
+	char buf[256];
+	std::snprintf(
+		buf,
+		sizeof(buf),
+		"%s p%.2f o%.2f",
+		text.empty() ? "?" : text.c_str(),
+		det.score,
+		conf_avg);
+	std::string label = buf;
+	if (label.empty()) {
+		label = "?";
+	}
+	int baseline = 0;
+	const double font_scale = 0.8;
+	const int thickness = 2;
+	const auto sz = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, font_scale, thickness, &baseline);
+	const int x = std::max(0, p1.x);
+	const int y = std::max(sz.height + 2, p1.y);
+	cv::rectangle(bgr,
+		cv::Rect(x, y - sz.height - 2, sz.width + 4, sz.height + baseline + 4),
+		color,
+		cv::FILLED);
+	cv::putText(bgr, label, cv::Point(x + 2, y), cv::FONT_HERSHEY_SIMPLEX, font_scale, cv::Scalar(0, 0, 0), thickness);
+}
+
+void DrawVehicle(cv::Mat& bgr, const yolo_detector::Detection& det, bool has_plate, int brand_id) {
+	const cv::Scalar color = has_plate ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255);
+	const cv::Point p1(static_cast<int>(det.x1), static_cast<int>(det.y1));
+	const cv::Point p2(static_cast<int>(det.x2), static_cast<int>(det.y2));
+	cv::rectangle(bgr, p1, p2, color, 2);
+
+	char buf[128];
+	if (brand_id >= 0) {
+		std::snprintf(buf, sizeof(buf), "%s %s %.2f", VehicleClassName(det.cls), BrandClassName(brand_id), det.score);
+	} else {
+		std::snprintf(buf, sizeof(buf), "%s %.2f", VehicleClassName(det.cls), det.score);
+	}
+	const std::string label = buf;
+	int baseline = 0;
+	const double font_scale = 0.7;
+	const int thickness = 2;
+	const auto sz = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, font_scale, thickness, &baseline);
+	const int x = std::max(0, p1.x);
+	const int y = std::max(sz.height + 2, p1.y);
+	cv::rectangle(bgr,
+		cv::Rect(x, y - sz.height - 2, sz.width + 4, sz.height + baseline + 4),
+		color,
+		cv::FILLED);
+	cv::putText(bgr, label, cv::Point(x + 2, y), cv::FONT_HERSHEY_SIMPLEX, font_scale, cv::Scalar(255, 255, 255), thickness);
+}
+
+struct PlatePipelineResult {
+	std::vector<ocr_batch::OcrText> texts;
+	std::vector<yolo_detector::Detection> plate_boxes_in_image;
+	std::vector<bool> vehicle_has_plate;
+	bool has_any_plate = false;
+};
+
+PlatePipelineResult RunPlatePipeline(
+	const cv::Mat& bgr,
+	Ort::Session& plate_sess,
+	Ort::Session& ocr_sess,
+	const std::vector<cv::Mat>& vehicle_crops,
+	const std::vector<cv::Rect>& vehicle_rects) {
+	PlatePipelineResult result;
+	result.vehicle_has_plate.assign(vehicle_rects.size(), false);
+
+	auto plates_per_vehicle = yolo_detector::RunBatch(plate_sess, vehicle_crops, app_config::kPlateConfThresh, app_config::kNmsIouThresh);
+
+	std::vector<cv::Mat> plate_rgb_ocr;
+	for (size_t i = 0; i < plates_per_vehicle.size(); ++i) {
+		const auto& dets = plates_per_vehicle[i];
+		const cv::Rect& vr = vehicle_rects[i];
+		for (const auto& p : dets) {
+			yolo_detector::Detection in_img = p;
+			in_img.x1 += static_cast<float>(vr.x);
+			in_img.y1 += static_cast<float>(vr.y);
+			in_img.x2 += static_cast<float>(vr.x);
+			in_img.y2 += static_cast<float>(vr.y);
+			cv::Rect pr = ToRectClamped(in_img.x1, in_img.y1, in_img.x2, in_img.y2, bgr.cols, bgr.rows);
+			if (pr.width <= 2 || pr.height <= 2) {
+				continue;
+			}
+			cv::Mat plate_bgr = bgr(pr);
+			cv::Mat plate_rgb = image_preprocess::PreprocessMatRgbU8Hwc(plate_bgr, app_config::kInputW, app_config::kInputH);
+			plate_rgb_ocr.push_back(plate_rgb);
+			result.plate_boxes_in_image.push_back(in_img);
+			result.vehicle_has_plate[i] = true;
+		}
+	}
+
+	if (plate_rgb_ocr.empty()) {
+		result.has_any_plate = false;
+		return result;
+	}
+
+	result.texts = ocr_batch::RunBatch(ocr_sess, plate_rgb_ocr, app_config::kAlphabet);
+	if (result.texts.size() != result.plate_boxes_in_image.size()) {
+		throw std::runtime_error("Loi noi bo: so OCR text != so plate boxes");
+	}
+	result.has_any_plate = true;
+	return result;
+}
+
+} // namespace
+
+void DrawFps(cv::Mat& bgr, double fps) {
+	char fps_buf[64];
+	std::snprintf(fps_buf, sizeof(fps_buf), "FPS: %.2f", fps);
+	const std::string label = fps_buf;
+
+	int baseline = 0;
+	const double font_scale = 0.8;
+	const int thickness = 2;
+	const auto sz = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, font_scale, thickness, &baseline);
+	const int margin = 8;
+	const int x = margin;
+	const int y = margin + sz.height;
+
+	cv::rectangle(
+		bgr,
+		cv::Rect(x - 4, y - sz.height - 4, sz.width + 8, sz.height + baseline + 8),
+		cv::Scalar(0, 0, 0),
+		cv::FILLED);
+	cv::putText(
+		bgr,
+		label,
+		cv::Point(x, y + baseline / 2),
+		cv::FONT_HERSHEY_SIMPLEX,
+		font_scale,
+		cv::Scalar(0, 255, 255),
+		thickness);
+}
+
+bool AnnotateFrame(
+	cv::Mat& bgr,
+	Ort::Session& vehicle_sess,
+	Ort::Session& plate_sess,
+	Ort::Session& ocr_sess,
+	Ort::Session& brand_sess,
+	bool verbose) {
+	auto vehicles_batch = yolo_detector::RunBatch(vehicle_sess, {bgr}, app_config::kVehicleConfThresh, app_config::kNmsIouThresh);
+	const auto& vehicles = vehicles_batch.at(0);
+	if (vehicles.empty()) {
+		if (verbose) {
+			std::cout << "Khong phat hien phuong tien\n";
+		}
+		return false;
+	}
+	if (verbose) {
+		for (size_t i = 0; i < vehicles.size(); ++i) {
+			std::cout
+				<< "vehicle " << i
+				<< ": cls=" << vehicles[i].cls << "(" << VehicleClassName(vehicles[i].cls) << ")"
+				<< " conf=" << vehicles[i].score
+				<< " box=[" << vehicles[i].x1 << "," << vehicles[i].y1 << "," << vehicles[i].x2 << "," << vehicles[i].y2 << "]\n";
+		}
+	}
+
+	std::vector<cv::Mat> vehicle_crops;
+	std::vector<cv::Rect> vehicle_rects;
+	std::vector<yolo_detector::Detection> vehicles_used;
+	vehicle_crops.reserve(vehicles.size());
+	vehicle_rects.reserve(vehicles.size());
+	vehicles_used.reserve(vehicles.size());
+	for (const auto& v : vehicles) {
+		const float box_h = v.y2 - v.y1;
+		const float expand_y2 = v.y2 + box_h * 0.05f;
+		cv::Rect r = ToRectClamped(v.x1, v.y1, v.x2, expand_y2, bgr.cols, bgr.rows);
+		if (r.width <= 2 || r.height <= 2) {
+			continue;
+		}
+		vehicle_rects.push_back(r);
+		vehicle_crops.push_back(bgr(r).clone());
+		yolo_detector::Detection v_expanded = v;
+		v_expanded.y2 = std::min(expand_y2, static_cast<float>(bgr.rows));
+		vehicles_used.push_back(v_expanded);
+	}
+	if (vehicle_crops.empty()) {
+		if (verbose) {
+			std::cout << "Khong co crop phuong tien hop le\n";
+		}
+		return false;
+	}
+
+	auto brand_future = std::async(std::launch::async, [&]() {
+		return brand_classifier::ClassifyBatch(
+			brand_sess,
+			vehicle_crops,
+			app_config::kBrandInputH,
+			app_config::kBrandInputW);
+	});
+
+	auto plate_future = std::async(std::launch::async, [&]() {
+		return RunPlatePipeline(bgr, plate_sess, ocr_sess, vehicle_crops, vehicle_rects);
+	});
+
+	std::vector<brand_classifier::BrandResult> brand_results = brand_future.get();
+	if (brand_results.size() != vehicle_crops.size()) {
+		throw std::runtime_error("Loi noi bo: so ket qua brand != so vehicle crops");
+	}
+
+	PlatePipelineResult plate_result = plate_future.get();
+
+	if (verbose) {
+		for (size_t i = 0; i < brand_results.size(); ++i) {
+			std::cout
+				<< "vehicle " << i
+				<< ": brand=" << brand_results[i].class_id << "(" << BrandClassName(brand_results[i].class_id) << ")"
+				<< " brand_conf=" << brand_results[i].conf << "\n";
+		}
+	}
+
+	if (!plate_result.has_any_plate) {
+		if (verbose) {
+			std::cout << "Khong phat hien bien so\n";
+		}
+		for (size_t i = 0; i < vehicles_used.size(); ++i) {
+			DrawVehicle(bgr, vehicles_used[i], false, brand_results[i].class_id);
+		}
+		return true;
+	}
+
+	for (size_t i = 0; i < vehicles_used.size(); ++i) {
+		DrawVehicle(bgr, vehicles_used[i], plate_result.vehicle_has_plate[i], brand_results[i].class_id);
+	}
+
+	for (size_t i = 0; i < plate_result.texts.size(); ++i) {
+		DrawPlate(bgr, plate_result.plate_boxes_in_image[i], plate_result.texts[i].text, plate_result.texts[i].conf_avg);
+		if (verbose) {
+			std::cout
+				<< "plate " << i
+				<< ": text=" << plate_result.texts[i].text
+				<< " plate_conf=" << plate_result.plate_boxes_in_image[i].score
+				<< " ocr_conf_avg=" << plate_result.texts[i].conf_avg
+				<< " box=[" << plate_result.plate_boxes_in_image[i].x1 << "," << plate_result.plate_boxes_in_image[i].y1 << "," << plate_result.plate_boxes_in_image[i].x2 << "," << plate_result.plate_boxes_in_image[i].y2 << "]\n";
+		}
+	}
+
+	return true;
+}
