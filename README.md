@@ -1,118 +1,142 @@
-# OCR Plate Pipeline (ONNX Runtime C++ + OpenCV)
+# OCR Plate (C++ / ONNX Runtime / OpenCV)
 
-Pipeline nhận diện biển số theo chuỗi:
+Pipeline nhận diện biển số xe với C++:
 
-1. Detect phương tiện (YOLO26 NMS-free)
-2. Crop phương tiện
-3. Phân loại hãng xe trên crop phương tiện
-4. Detect biển số trên crop phương tiện (batch)
-5. Crop biển số và OCR (batch)
-6. Vẽ bbox + nhãn + FPS lên ảnh/video output
+1. Detect phương tiện (YOLO)
+2. Crop phương tiện (mở rộng nhẹ bbox theo trục Y)
+3. Chạy 2 nhánh song song:
+	- Nhánh A: phân loại brand (API batch, nội bộ infer đa luồng)
+	- Nhánh B: detect plate theo batch -> crop plate -> OCR theo batch
+4. Vẽ bbox + nhãn lên ảnh/video output
 
-## 1) Yêu cầu môi trường
+## 1. Yêu cầu
 
-- Linux (khuyến nghị Ubuntu/Debian)
+- Linux (khuyến nghị Ubuntu 22.04)
 - CMake >= 3.10
-- GCC/G++ có hỗ trợ C++23
+- Compiler hỗ trợ C++23
 - OpenCV dev
 
-Cài gói cần thiết:
+Cài dependency:
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake pkg-config libopencv-dev
 ```
 
-ONNX Runtime đã được vendor sẵn trong `third_party/onnxruntime`.
+ONNX Runtime đã được vendor sẵn tại `third_party/onnxruntime`.
 
-## 2) Build
+## 2. Build
 
 ```bash
 rm -rf build
-mkdir -p build
 cmake -S . -B build
-cmake --build build -j"$(nproc)"
+cmake --build build -j"$(nproc)" --target main benchmark
 ```
 
-Binary sau build:
+Binary:
 
 - `out/build/bin/main`
+- `out/build/bin/benchmark`
 
-## 3) Cách chạy
+## 3. Chạy `main`
 
-Chương trình hỗ trợ 3 mode (chỉ dùng 1 mode mỗi lần):
+CLI hỗ trợ 3 mode (chọn đúng 1 mode):
 
 - `--image <path_anh>`
 - `--folder <path_thu_muc_anh>`
 - `--video <path_video>`
 
-Tuỳ chọn hiển thị:
+Option hiển thị:
 
-- `--show`: bật cửa sổ hiển thị output realtime
-- `--no-show`: tắt hiển thị (mặc định)
+- `--show`
+- `--no-show` (mặc định)
 
-### Ví dụ chạy ảnh
-
-```bash
-cd build
-../out/build/bin/main --image ../img/test1.jpg
-../out/build/bin/main --image ../img/test1.jpg --show
-```
-
-### Ví dụ chạy thư mục ảnh
+Ví dụ:
 
 ```bash
 cd build
+
+# 1 ảnh
+../out/build/bin/main --image ../img/1.jpeg
+
+# cả thư mục ảnh
 ../out/build/bin/main --folder ../img
-../out/build/bin/main --folder ../img --show
-```
 
-### Ví dụ chạy video
-
-```bash
-cd build
-../out/build/bin/main --video ../video2.mp4
+# video
 ../out/build/bin/main --video ../video2.mp4 --show
 ```
 
-Ghi chú:
+Nếu không truyền mode nào, app dùng ảnh mặc định trong `app_config::kDefaultImagePath`.
 
-- Nếu không truyền mode nào, chương trình dùng ảnh mặc định `kDefaultImagePath` trong `include/app_config.h`.
-- Với `--show`, cửa sổ OpenCV được đặt kích thước **800x600**.
-- Khi chạy video với `--show`, bấm `q` hoặc `ESC` để dừng sớm.
+## 4. Chạy benchmark (1 ảnh)
 
-## 4) Model và cấu hình chính
+Benchmark có warm-up trước khi đo và in thời gian theo stage:
 
-Khai báo trong `include/app_config.h`:
+- vehicle detect
+- brand classify
+- plate detect
+- plate OCR
+- total pipeline
 
-- OCR model: `../model/model.onnx`
-- Vehicle model: `../model/vehicle_detection.onnx`
-- Plate model: `../model/plate_detection.onnx`
-- Brand model: `../model/brand_car_classification.onnx`
+Ví dụ:
 
-Thông số chính:
+```bash
+cd build
+../out/build/bin/benchmark --image ../img/1.jpeg --warmup 3 --runs 10
+```
 
-- OCR input: `64x128` (RGB, uint8, NHWC)
-- Brand input: `224x224`
-- `kVehicleConfThresh = 0.4`
-- `kPlateConfThresh = 0.4`
-- `kOcrConfAvgThresh = 0.60`
+## 5. Cấu hình model và ngưỡng
 
-## 5) Output
+Khai báo tại `include/app_config.h`:
 
-Output được ghi tại:
+- `kVehicleModelPath = ../model/vehicle_int8.onnx`
+- `kPlateModelPath = ../model/plate_int8.onnx`
+- `kBrandCarModelPath = ../model/brand_car_classification.onnx`
+- `kOcrModelPath = ../model/model_ocr_plate.onnx`
 
-- `out/build/img_out`
+Thông số chính hiện tại:
 
-Tên file output:
+- OCR input: `64x128`, RGB, uint8, NHWC
+- Brand input: `224x224`, float32 NCHW
+- `kVehicleConfThresh = 0.55`
+- `kPlateConfThresh = 0.7`
+- `kOcrConfAvgThresh = 0.75`
+- `kNmsIouThresh = 0.45`
 
-- Ảnh: `<ten_anh>_annotated.jpg`
-- Video: `<ten_video>_annotated.mp4`
+## 6. Docker
 
-Ngoài file output, chương trình in log xử lý (vehicle/brand/plate/OCR) ra stdout.
+Build image:
 
-## 6) Troubleshooting nhanh
+```bash
+docker build -t ocr-plate .
+```
 
-- Lỗi `Tham so khong hop le`: kiểm tra đúng cờ CLI, ví dụ `--show` không đi kèm giá trị.
-- Không mở được model/video/image: kiểm tra đường dẫn tương đối, nên chạy từ thư mục `build` như ví dụ.
-- Warning ONNX Runtime (optimizer): thường là cảnh báo tối ưu đồ thị, không nhất thiết là lỗi suy luận.
+Chạy `main`:
+
+```bash
+docker run --rm -v "$PWD/img:/app/img" ocr-plate --image /app/img/1.jpeg
+```
+
+Chạy `benchmark`:
+
+```bash
+docker run --rm -v "$PWD/img:/app/img" --entrypoint /app/benchmark ocr-plate --image /app/img/1.jpeg --warmup 3 --runs 10
+```
+
+## 7. Cấu trúc mã nguồn chính
+
+- `src/main.cpp`: CLI + luồng xử lý image/folder/video
+- `src/frame_annotator.cpp`: pipeline annotate frame + overlay
+- `src/brand_classifier.cpp`: classify brand (single + batch/multi-thread)
+- `src/yolo_detector.cpp`: infer YOLO core
+- `src/yolo_preprocess.cpp`: letterbox + tensor packing
+- `src/yolo_nms.cpp`: NMS
+- `src/yolo_postprocess.cpp`: parse output YOLO
+- `src/ocr_batch.cpp`: OCR batch
+- `src/benchmark.cpp`: benchmark từng stage
+
+## 8. Lưu ý quan trọng về batch brand
+
+Một số model ONNX có input khai báo dynamic (ví dụ `float32[s77,3,224,224]`) nhưng graph nội bộ vẫn có `Reshape/View` ràng buộc batch=1.
+
+Vì vậy, code hiện tại dùng cơ chế batch API + infer đa luồng theo từng mẫu (`batch=1`) để đảm bảo ổn định runtime, tránh lỗi reshape khi số xe > 1.
