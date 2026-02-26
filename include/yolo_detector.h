@@ -6,7 +6,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/core.hpp>
 
-namespace yolo26_nmsfree {
+namespace yolo_detector {
 
 struct Detection {
 	float x1 = 0.0f;
@@ -30,18 +30,18 @@ struct LetterboxInfo {
 struct InputSpec {
 	ONNXTensorElementDataType type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
 	bool nchw = true; // true: NCHW, false: NHWC
-	int64_t n = -1; // batch; -1 nghĩa là dynamic/không rõ
+	int64_t n = -1;   // batch; -1 nghĩa là dynamic/không rõ
 	int64_t c = 3;
 	int64_t h = 640;
 	int64_t w = 640;
 };
 
-// Chạy YOLOv26 end-to-end (NMS-free) để detect.
-// Output kỳ vọng: (N, 300, 6) hoặc (300, 6), mỗi dòng: [x1,y1,x2,y2,score,cls]
-// Tọa độ có thể là theo pixel của input hoặc normalized [0,1].
+// Chạy YOLO để detect.
+// Hỗ trợ standard YOLO output: (N, 4+num_classes, num_anchors) → transpose + NMS
 std::vector<std::vector<Detection>> RunBatch(
 	Ort::Session& session,
 	const std::vector<cv::Mat>& bgr_images,
-	float conf_threshold);
+	float conf_threshold,
+	float nms_iou_threshold = 0.35f);
 
-} // namespace yolo26_nmsfree
+} // namespace yolo_detector
