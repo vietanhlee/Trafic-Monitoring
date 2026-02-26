@@ -20,4 +20,12 @@ BrandResult ClassifySingle(
 	int input_h,
 	int input_w);
 
+// Chạy phân loại hãng xe theo batch ảnh BGR crop phương tiện.
+// Model kỳ vọng input float32 NCHW: (N,3,H,W).
+std::vector<BrandResult> ClassifyBatch(
+	Ort::Session& session,
+	const std::vector<cv::Mat>& bgr_images,
+	int input_h,
+	int input_w);
+
 } // namespace brand_classifier
