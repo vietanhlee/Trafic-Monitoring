@@ -135,8 +135,13 @@ struct PlatePipelineResult {
 	bool has_any_plate = false;
 };
 
+struct PlateCandidate {
+	size_t vehicle_index = 0;
+	yolo_detector::Detection plate_in_vehicle;
+	cv::Rect plate_rect_in_vehicle;
+};
+
 PlatePipelineResult RunPlatePipeline(
-	const cv::Mat& bgr,
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
 	const std::vector<cv::Mat>& vehicle_crops,
@@ -145,28 +150,61 @@ PlatePipelineResult RunPlatePipeline(
 	result.vehicle_has_plate.assign(vehicle_rects.size(), false);
 
 	auto plates_per_vehicle = yolo_detector::RunBatch(plate_sess, vehicle_crops, app_config::kPlateConfThresh, app_config::kNmsIouThresh);
-
-	std::vector<cv::Mat> plate_rgb_ocr;
+	std::vector<PlateCandidate> candidates;
 	for (size_t i = 0; i < plates_per_vehicle.size(); ++i) {
 		const auto& dets = plates_per_vehicle[i];
-		const cv::Rect& vr = vehicle_rects[i];
 		for (const auto& p : dets) {
-			yolo_detector::Detection in_img = p;
+			cv::Rect pr_local = ToRectClamped(
+				p.x1,
+				p.y1,
+				p.x2,
+				p.y2,
+				vehicle_crops[i].cols,
+				vehicle_crops[i].rows);
+			if (pr_local.width <= 2 || pr_local.height <= 2) {
+				continue;
+			}
+			PlateCandidate c;
+			c.vehicle_index = i;
+			c.plate_in_vehicle = p;
+			c.plate_rect_in_vehicle = pr_local;
+			candidates.push_back(std::move(c));
+		}
+	}
+
+	auto map_future = std::async(std::launch::async, [&]() {
+		std::vector<yolo_detector::Detection> mapped;
+		mapped.reserve(candidates.size());
+		std::vector<bool> has_plate(vehicle_rects.size(), false);
+		for (const auto& c : candidates) {
+			const cv::Rect& vr = vehicle_rects[c.vehicle_index];
+			yolo_detector::Detection in_img = c.plate_in_vehicle;
 			in_img.x1 += static_cast<float>(vr.x);
 			in_img.y1 += static_cast<float>(vr.y);
 			in_img.x2 += static_cast<float>(vr.x);
 			in_img.y2 += static_cast<float>(vr.y);
-			cv::Rect pr = ToRectClamped(in_img.x1, in_img.y1, in_img.x2, in_img.y2, bgr.cols, bgr.rows);
-			if (pr.width <= 2 || pr.height <= 2) {
-				continue;
-			}
-			cv::Mat plate_bgr = bgr(pr);
-			cv::Mat plate_rgb = image_preprocess::PreprocessMatRgbU8Hwc(plate_bgr, app_config::kInputW, app_config::kInputH);
-			plate_rgb_ocr.push_back(plate_rgb);
-			result.plate_boxes_in_image.push_back(in_img);
-			result.vehicle_has_plate[i] = true;
+			mapped.push_back(std::move(in_img));
+			has_plate[c.vehicle_index] = true;
 		}
-	}
+		return std::make_pair(std::move(mapped), std::move(has_plate));
+	});
+
+	auto crop_future = std::async(std::launch::async, [&]() {
+		std::vector<cv::Mat> plate_rgb_ocr;
+		plate_rgb_ocr.reserve(candidates.size());
+		for (const auto& c : candidates) {
+			const cv::Mat& vehicle_bgr = vehicle_crops[c.vehicle_index];
+			cv::Mat plate_bgr = vehicle_bgr(c.plate_rect_in_vehicle);
+			cv::Mat plate_rgb = image_preprocess::PreprocessMatRgbU8Hwc(plate_bgr, app_config::kInputW, app_config::kInputH);
+			plate_rgb_ocr.push_back(std::move(plate_rgb));
+		}
+		return plate_rgb_ocr;
+	});
+
+	auto mapped_out = map_future.get();
+	result.plate_boxes_in_image = std::move(mapped_out.first);
+	result.vehicle_has_plate = std::move(mapped_out.second);
+	std::vector<cv::Mat> plate_rgb_ocr = crop_future.get();
 
 	if (plate_rgb_ocr.empty()) {
 		result.has_any_plate = false;
@@ -275,7 +313,7 @@ bool InferFrameOverlay(
 	});
 
 	auto plate_future = std::async(std::launch::async, [&]() {
-		return RunPlatePipeline(bgr, plate_sess, ocr_sess, vehicle_crops, vehicle_rects);
+		return RunPlatePipeline(plate_sess, ocr_sess, vehicle_crops, vehicle_rects);
 	});
 
 	std::vector<brand_classifier::BrandResult> brand_results = brand_future.get();

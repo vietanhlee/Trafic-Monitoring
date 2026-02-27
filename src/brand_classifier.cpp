@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -96,8 +97,45 @@ std::vector<BrandResult> ClassifyBatch(
 
 	std::vector<std::vector<float>> prepared_inputs;
 	prepared_inputs.resize(total_images);
-	for (size_t i = 0; i < total_images; ++i) {
-		PrepareInputNchwFloat(bgr_images[i], input_h, input_w, prepared_inputs[i]);
+	if (total_images == 1) {
+		PrepareInputNchwFloat(bgr_images[0], input_h, input_w, prepared_inputs[0]);
+	} else {
+		const unsigned int hw_threads = std::thread::hardware_concurrency();
+		const size_t max_threads = (hw_threads > 0) ? static_cast<size_t>(hw_threads) : 4ull;
+		const size_t prep_thread_count = std::min(total_images, std::max<size_t>(1, max_threads));
+
+		std::atomic<size_t> prep_next_index{0};
+		std::mutex prep_error_mutex;
+		std::exception_ptr prep_error = nullptr;
+		std::vector<std::thread> prep_workers;
+		prep_workers.reserve(prep_thread_count);
+
+		for (size_t t = 0; t < prep_thread_count; ++t) {
+			prep_workers.emplace_back([&]() {
+				try {
+					while (true) {
+						const size_t idx = prep_next_index.fetch_add(1);
+						if (idx >= total_images) {
+							break;
+						}
+						PrepareInputNchwFloat(bgr_images[idx], input_h, input_w, prepared_inputs[idx]);
+					}
+				} catch (...) {
+					std::lock_guard<std::mutex> lock(prep_error_mutex);
+					if (!prep_error) {
+						prep_error = std::current_exception();
+					}
+				}
+			});
+		}
+
+		for (auto& w : prep_workers) {
+			w.join();
+		}
+
+		if (prep_error) {
+			std::rethrow_exception(prep_error);
+		}
 	}
 
 	auto infer_one = [&](size_t idx) -> BrandResult {
@@ -159,6 +197,7 @@ std::vector<BrandResult> ClassifyBatch(
 	const size_t thread_count = std::min(total_images, std::max<size_t>(1, max_threads));
 
 	std::atomic<size_t> next_index{0};
+	std::mutex error_mutex;
 	std::exception_ptr worker_error = nullptr;
 	std::vector<std::thread> workers;
 	workers.reserve(thread_count);
@@ -174,6 +213,7 @@ std::vector<BrandResult> ClassifyBatch(
 					results[idx] = infer_one(idx);
 				}
 			} catch (...) {
+				std::lock_guard<std::mutex> lock(error_mutex);
 				if (!worker_error) {
 					worker_error = std::current_exception();
 				}
