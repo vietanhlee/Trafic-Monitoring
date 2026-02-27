@@ -1,6 +1,6 @@
-# OCR Plate (C++ / ONNX Runtime / OpenCV)
+# Trafic-Monitoring (C++ / ONNX Runtime / OpenCV)
 
-Dự án nhận diện biển số xe bằng C++ với ONNX Runtime + OpenCV.
+Dự án Trafic-Monitoring nhận diện phương tiện, phân loại hãng xe và OCR biển số bằng C++ với ONNX Runtime + OpenCV.
 
 ## Pipeline xử lý (chi tiết)
 
@@ -191,19 +191,19 @@ Thông số chính hiện tại:
 Build image:
 
 ```bash
-docker build -t ocr-plate .
+docker build -t trafic-monitoring .
 ```
 
 Chạy `main`:
 
 ```bash
-docker run --rm -v "$PWD/img:/app/img" ocr-plate --image /app/img/1.jpeg
+docker run --rm -v "$PWD/img:/app/img" trafic-monitoring --image /app/img/1.jpeg
 ```
 
 Chạy `benchmark`:
 
 ```bash
-docker run --rm -v "$PWD/img:/app/img" --entrypoint /app/benchmark ocr-plate --image /app/img/1.jpeg --warmup 3 --runs 10
+docker run --rm -v "$PWD/img:/app/img" --entrypoint /app/benchmark trafic-monitoring --image /app/img/1.jpeg --warmup 3 --runs 10
 ```
 
 ## 6) Cấu trúc mã nguồn chính
