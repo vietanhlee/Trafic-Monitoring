@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <opencv2/imgproc.hpp>
@@ -210,13 +211,17 @@ void DrawFps(cv::Mat& bgr, double fps) {
 		thickness);
 }
 
-bool AnnotateFrame(
-	cv::Mat& bgr,
+bool InferFrameOverlay(
+	const cv::Mat& bgr,
 	Ort::Session& vehicle_sess,
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
 	Ort::Session& brand_sess,
+	FrameOverlayResult& out_overlay,
 	bool verbose) {
+	out_overlay.vehicles.clear();
+	out_overlay.plates.clear();
+
 	auto vehicles_batch = yolo_detector::RunBatch(vehicle_sess, {bgr}, app_config::kVehicleConfThresh, app_config::kNmsIouThresh);
 	const auto& vehicles = vehicles_batch.at(0);
 	if (vehicles.empty()) {
@@ -294,17 +299,29 @@ bool AnnotateFrame(
 			std::cout << "Khong phat hien bien so\n";
 		}
 		for (size_t i = 0; i < vehicles_used.size(); ++i) {
-			DrawVehicle(bgr, vehicles_used[i], false, brand_results[i].class_id);
+			VehicleOverlayResult v;
+			v.det = vehicles_used[i];
+			v.has_plate = false;
+			v.brand_id = brand_results[i].class_id;
+			out_overlay.vehicles.push_back(v);
 		}
 		return true;
 	}
 
 	for (size_t i = 0; i < vehicles_used.size(); ++i) {
-		DrawVehicle(bgr, vehicles_used[i], plate_result.vehicle_has_plate[i], brand_results[i].class_id);
+		VehicleOverlayResult v;
+		v.det = vehicles_used[i];
+		v.has_plate = plate_result.vehicle_has_plate[i];
+		v.brand_id = brand_results[i].class_id;
+		out_overlay.vehicles.push_back(v);
 	}
 
 	for (size_t i = 0; i < plate_result.texts.size(); ++i) {
-		DrawPlate(bgr, plate_result.plate_boxes_in_image[i], plate_result.texts[i].text, plate_result.texts[i].conf_avg);
+		PlateOverlayResult p;
+		p.det = plate_result.plate_boxes_in_image[i];
+		p.text = plate_result.texts[i].text;
+		p.conf_avg = plate_result.texts[i].conf_avg;
+		out_overlay.plates.push_back(std::move(p));
 		if (verbose) {
 			std::cout
 				<< "plate " << i
@@ -316,4 +333,35 @@ bool AnnotateFrame(
 	}
 
 	return true;
+}
+
+void DrawFrameOverlay(cv::Mat& bgr, const FrameOverlayResult& overlay) {
+	for (const auto& v : overlay.vehicles) {
+		DrawVehicle(bgr, v.det, v.has_plate, v.brand_id);
+	}
+	for (const auto& p : overlay.plates) {
+		DrawPlate(bgr, p.det, p.text, p.conf_avg);
+	}
+}
+
+bool AnnotateFrame(
+	cv::Mat& bgr,
+	Ort::Session& vehicle_sess,
+	Ort::Session& plate_sess,
+	Ort::Session& ocr_sess,
+	Ort::Session& brand_sess,
+	bool verbose) {
+	FrameOverlayResult overlay;
+	const bool detected = InferFrameOverlay(
+		bgr,
+		vehicle_sess,
+		plate_sess,
+		ocr_sess,
+		brand_sess,
+		overlay,
+		verbose);
+	if (detected) {
+		DrawFrameOverlay(bgr, overlay);
+	}
+	return detected;
 }

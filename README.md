@@ -1,13 +1,47 @@
 # OCR Plate (C++ / ONNX Runtime / OpenCV)
 
-Dự án nhận diện biển số xe bằng C++ theo pipeline:
+Dự án nhận diện biển số xe bằng C++ với ONNX Runtime + OpenCV.
 
-1. Detect phương tiện (YOLO)
-2. Crop phương tiện
-3. Chạy song song:
-   - Phân loại brand xe
-   - Detect plate -> crop plate -> OCR plate
-4. Vẽ kết quả lên ảnh/video
+## Pipeline xử lý (chi tiết)
+
+Đầu vào hỗ trợ 3 chế độ: `--image`, `--folder`, `--video`.
+
+Luồng xử lý cho mỗi frame/ảnh:
+
+1. **Vehicle Detection (YOLO)**
+   - Tìm các phương tiện trong ảnh/frame.
+2. **Crop Vehicle ROI**
+   - Cắt từng vùng phương tiện để xử lý theo batch.
+3. **Chạy song song 2 nhánh trên batch vehicle**
+   - **Nhánh A - Brand Classification**: dự đoán hãng xe cho từng vehicle crop.
+   - **Nhánh B - Plate + OCR**:
+     - Detect biển số trong từng vehicle crop.
+     - Map bbox biển số về tọa độ ảnh gốc.
+     - Crop biển số và OCR batch để ra text + độ tin cậy.
+4. **Ghép kết quả & vẽ overlay**
+   - Vẽ bbox phương tiện, bbox biển số, label (brand + plate text + confidence).
+5. **Output**
+   - Image/Folder: ghi ảnh annotate.
+   - Video: ghi video annotate và overlay FPS.
+
+Sơ đồ tổng quan:
+
+```mermaid
+flowchart TD
+    A[Input image/folder/video] --> B[Vehicle Detection YOLO]
+    B --> C[Crop vehicle ROIs]
+
+    C --> D[Branch A: Brand Classification batch]
+    C --> E[Branch B: Plate Detection batch]
+    E --> F[Map plate bbox to original frame]
+    F --> G[Crop plate + OCR batch]
+
+    D --> H[Merge results]
+    G --> H
+
+    H --> I[Draw overlay: vehicle box, plate box, text, confidence]
+    I --> J[Save/Show output]
+```
 
 ONNX Runtime đã được vendor sẵn trong `third_party/onnxruntime`.
 
@@ -105,12 +139,23 @@ Tùy chọn hiển thị:
 - `--show`
 - `--no-show` (mặc định)
 
+Tùy chọn lưu output:
+
+- Mặc định luôn lưu file output (`*_annotated.jpg` / `*_annotated.mp4`)
+- `--nosave`: không lưu file output (chỉ hợp lệ với `--image` hoặc `--video`, không áp dụng cho `--folder`)
+
+Ghi chú video:
+
+- Video được infer theo chu kỳ `app_config::kVideoInferEveryNFrames` (mặc định `5`): frame đầu chu kỳ chạy detect/OCR, các frame còn lại tái sử dụng overlay gần nhất.
+
 Ví dụ:
 
 ```bash
 ./run.sh --image img/1.jpeg
+./run.sh --image img/1.jpeg --nosave
 ./run.sh --folder img
 ./run.sh --video video2.mp4 --show
+./run.sh --video video2.mp4 --nosave
 ```
 
 ### Benchmark mode
@@ -123,25 +168,7 @@ Chạy benchmark bằng cờ `--benchmark` (các đối số còn lại forward 
 
 Nếu chưa build, `run.sh` sẽ báo thiếu executable và yêu cầu chạy `./build.sh` trước.
 
-## 5) Cấu hình model & ngưỡng
-
-Thiết lập trong `include/app_config.h`:
-
-- `kVehicleModelPath = ../model/vehicle_int8.onnx`
-- `kPlateModelPath = ../model/plate_int8.onnx`
-- `kBrandCarModelPath = ../model/brand_car_classification.onnx`
-- `kOcrModelPath = ../model/model_ocr_plate.onnx`
-
-Thông số chính hiện tại:
-
-- OCR input: `64x128`, RGB, uint8, NHWC
-- Brand input: `224x224`, float32 NCHW
-- `kVehicleConfThresh = 0.55`
-- `kPlateConfThresh = 0.7`
-- `kOcrConfAvgThresh = 0.75`
-- `kNmsIouThresh = 0.45`
-
-## 6) Docker
+## 5) Docker
 
 Build image:
 
@@ -161,7 +188,7 @@ Chạy `benchmark`:
 docker run --rm -v "$PWD/img:/app/img" --entrypoint /app/benchmark ocr-plate --image /app/img/1.jpeg --warmup 3 --runs 10
 ```
 
-## 7) Cấu trúc mã nguồn chính
+## 6) Cấu trúc mã nguồn chính
 
 - `src/main.cpp`: CLI + luồng xử lý image/folder/video
 - `src/frame_annotator.cpp`: annotate frame + overlay

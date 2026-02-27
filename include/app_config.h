@@ -36,4 +36,7 @@ inline const std::string kAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_";
 // Ảnh mặc định để chạy nếu không truyền --image
 inline constexpr const char* kDefaultImagePath = "../img/1.jpeg";
 
+// Video: cứ mỗi N frame mới chạy inference 1 lần, các frame còn lại tái dùng overlay gần nhất
+inline constexpr int kVideoInferEveryNFrames = 5;
+
 } // namespace app_config

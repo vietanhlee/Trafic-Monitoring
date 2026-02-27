@@ -26,6 +26,7 @@ int ProcessOneImage(
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
 	Ort::Session& brand_sess,
+	bool save_output,
 	bool show_output,
 	double* out_infer_ms = nullptr) {
 	if (!fs::exists(image_path)) {
@@ -40,7 +41,9 @@ int ProcessOneImage(
 	}
 
 	std::cout << "=== Xu ly anh: " << image_path.string() << " ===\n";
-	fs::create_directories(kOutputDir);
+	if (save_output) {
+		fs::create_directories(kOutputDir);
+	}
 
 	auto t0 = std::chrono::steady_clock::now();
 	const bool detected = AnnotateFrame(bgr, vehicle_sess, plate_sess, ocr_sess, brand_sess, true);
@@ -54,11 +57,15 @@ int ProcessOneImage(
 		return 0;
 	}
 
-	const fs::path out_path = kOutputDir / (image_path.stem().string() + "_annotated.jpg");
-	if (!cv::imwrite(out_path.string(), bgr)) {
-		throw std::runtime_error("Khong ghi duoc anh output: " + out_path.string());
+	if (save_output) {
+		const fs::path out_path = kOutputDir / (image_path.stem().string() + "_annotated.jpg");
+		if (!cv::imwrite(out_path.string(), bgr)) {
+			throw std::runtime_error("Khong ghi duoc anh output: " + out_path.string());
+		}
+		std::cout << "Da ghi output: " << out_path.string() << "\n";
+	} else {
+		std::cout << "--nosave: bo qua ghi file output cho anh nay\n";
 	}
-	std::cout << "Da ghi output: " << out_path.string() << "\n";
 
 	if (show_output) {
 		const std::string window_name = "OCR Plate - Image Output";
@@ -78,6 +85,7 @@ int ProcessOneVideo(
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
 	Ort::Session& brand_sess,
+	bool save_output,
 	bool show_output) {
 	if (!fs::exists(video_path)) {
 		std::cerr << "Khong tim thay video: " << video_path.string() << "\n";
@@ -90,7 +98,9 @@ int ProcessOneVideo(
 	}
 
 	std::cout << "=== Xu ly video: " << video_path.string() << " ===\n";
-	fs::create_directories(kOutputDir);
+	if (save_output) {
+		fs::create_directories(kOutputDir);
+	}
 	const std::string window_name = "OCR Plate - Video Output";
 	if (show_output) {
 		cv::namedWindow(window_name, cv::WINDOW_NORMAL);
@@ -107,32 +117,78 @@ int ProcessOneVideo(
 		input_fps = 30.0;
 	}
 
-	const fs::path out_path = kOutputDir / (video_path.stem().string() + "_annotated.mp4");
-	cv::VideoWriter writer(
-		out_path.string(),
-		cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
-		input_fps,
-		cv::Size(frame.cols, frame.rows));
-	if (!writer.isOpened()) {
-		throw std::runtime_error("Khong mo duoc video writer: " + out_path.string());
+	fs::path out_path;
+	cv::VideoWriter writer;
+	if (save_output) {
+		out_path = kOutputDir / (video_path.stem().string() + "_annotated.mp4");
+		writer.open(
+			out_path.string(),
+			cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+			input_fps,
+			cv::Size(frame.cols, frame.rows));
+		if (!writer.isOpened()) {
+			throw std::runtime_error("Khong mo duoc video writer: " + out_path.string());
+		}
 	}
 
 	size_t frame_count = 0;
 	double total_infer_sec = 0.0;
+	size_t infer_count = 0;
+	double total_loop_interval_sec = 0.0;
+	auto prev_loop_start = std::chrono::steady_clock::now();
+	bool has_prev_loop_start = false;
+	double fps_ema = 0.0;
+	constexpr double kFpsEmaAlpha = 0.15;
+	FrameOverlayResult cached_overlay;
+	bool has_cached_overlay = false;
+	const int infer_every_n = std::max(1, app_config::kVideoInferEveryNFrames);
 	while (true) {
-		auto t0 = std::chrono::steady_clock::now();
-		try {
-			AnnotateFrame(frame, vehicle_sess, plate_sess, ocr_sess, brand_sess, false);
-		} catch (const std::exception& e) {
-			std::cerr << "Canh bao frame " << frame_count << ": " << e.what() << "\n";
+		auto loop_start = std::chrono::steady_clock::now();
+		double display_fps = fps_ema;
+		if (has_prev_loop_start) {
+			const double loop_interval = std::chrono::duration<double>(loop_start - prev_loop_start).count();
+			if (loop_interval > 0.0) {
+				const double inst_fps = 1.0 / loop_interval;
+				total_loop_interval_sec += loop_interval;
+				if (fps_ema <= 0.0) {
+					fps_ema = inst_fps;
+				} else {
+					fps_ema = fps_ema * (1.0 - kFpsEmaAlpha) + inst_fps * kFpsEmaAlpha;
+				}
+				display_fps = fps_ema;
+			}
 		}
-		auto t1 = std::chrono::steady_clock::now();
-		const double elapsed = std::chrono::duration<double>(t1 - t0).count();
-		total_infer_sec += elapsed;
-		const double fps = (elapsed > 0.0) ? (1.0 / elapsed) : 0.0;
+		prev_loop_start = loop_start;
+		has_prev_loop_start = true;
 
-		DrawFps(frame, fps);
-		writer.write(frame);
+		const bool run_infer = (frame_count % static_cast<size_t>(infer_every_n) == 0);
+		if (run_infer) {
+			auto infer_t0 = std::chrono::steady_clock::now();
+			try {
+				has_cached_overlay = InferFrameOverlay(
+					frame,
+					vehicle_sess,
+					plate_sess,
+					ocr_sess,
+					brand_sess,
+					cached_overlay,
+					false);
+				auto infer_t1 = std::chrono::steady_clock::now();
+				total_infer_sec += std::chrono::duration<double>(infer_t1 - infer_t0).count();
+				++infer_count;
+			} catch (const std::exception& e) {
+				std::cerr << "Canh bao frame " << frame_count << ": " << e.what() << "\n";
+			}
+		}
+
+		if (has_cached_overlay) {
+			DrawFrameOverlay(frame, cached_overlay);
+		}
+
+		DrawFps(frame, display_fps);
+		if (save_output) {
+			writer.write(frame);
+		}
 		if (show_output) {
 			cv::imshow(window_name, frame);
 		}
@@ -158,11 +214,20 @@ int ProcessOneVideo(
 		cv::destroyWindow(window_name);
 	}
 
-	std::cout << "Da ghi output video: " << out_path.string() << " (" << frame_count << " frame)\n";
-	if (frame_count > 0 && total_infer_sec > 0.0) {
-		const double avg_fps = static_cast<double>(frame_count) / total_infer_sec;
-		const double avg_ms = (total_infer_sec / static_cast<double>(frame_count)) * 1000.0;
-		std::printf("=== FPS trung binh (infer only): %.2f FPS (%.1f ms/frame) ===\n", avg_fps, avg_ms);
+	if (save_output) {
+		std::cout << "Da ghi output video: " << out_path.string() << " (" << frame_count << " frame)\n";
+	} else {
+		std::cout << "--nosave: bo qua ghi file output video\n";
+	}
+	if (frame_count > 1 && total_loop_interval_sec > 0.0) {
+		const double avg_display_fps = static_cast<double>(frame_count - 1) / total_loop_interval_sec;
+		const double avg_display_ms = (total_loop_interval_sec / static_cast<double>(frame_count - 1)) * 1000.0;
+		std::printf("=== FPS trung binh (video loop): %.2f FPS (%.1f ms/frame) ===\n", avg_display_fps, avg_display_ms);
+	}
+	if (infer_count > 0 && total_infer_sec > 0.0) {
+		const double infer_avg_ms = (total_infer_sec / static_cast<double>(infer_count)) * 1000.0;
+		const double infer_fps = static_cast<double>(infer_count) / total_infer_sec;
+		std::printf("=== Infer trung binh: %.2f FPS (%.1f ms/lan infer, moi %d frame infer 1 lan) ===\n", infer_fps, infer_avg_ms, infer_every_n);
 	}
 	return 0;
 }
@@ -176,6 +241,7 @@ int main(int argc, char** argv) {
 		fs::path image_path;
 		fs::path folder_path;
 		fs::path video_path;
+		bool save_output = true;
 		bool show_output = false;
 		try {
 			const auto opt = cli_args::Parse(argc, argv);
@@ -186,6 +252,7 @@ int main(int argc, char** argv) {
 			image_path = opt.image_path;
 			folder_path = opt.folder_path;
 			video_path = opt.video_path;
+			save_output = !opt.no_save;
 			show_output = opt.show;
 		} catch (const std::exception& e) {
 			std::cerr << e.what() << "\n";
@@ -258,7 +325,7 @@ int main(int argc, char** argv) {
 			for (const auto& p : image_paths) {
 				try {
 					double img_infer_ms = 0.0;
-					const int rc = ProcessOneImage(p, vehicle_sess, plate_sess, ocr_sess, brand_sess, show_output, &img_infer_ms);
+					const int rc = ProcessOneImage(p, vehicle_sess, plate_sess, ocr_sess, brand_sess, true, show_output, &img_infer_ms);
 					total_infer_ms += img_infer_ms;
 					++infer_count;
 					if (rc != 0) {
@@ -279,10 +346,10 @@ int main(int argc, char** argv) {
 		}
 
 		if (!video_path.empty()) {
-			return ProcessOneVideo(video_path, vehicle_sess, plate_sess, ocr_sess, brand_sess, show_output);
+			return ProcessOneVideo(video_path, vehicle_sess, plate_sess, ocr_sess, brand_sess, save_output, show_output);
 		}
 
-		return ProcessOneImage(image_path, vehicle_sess, plate_sess, ocr_sess, brand_sess, show_output);
+		return ProcessOneImage(image_path, vehicle_sess, plate_sess, ocr_sess, brand_sess, save_output, show_output);
 	} catch (const std::exception& e) {
 		std::cerr << "Loi: " << e.what() << "\n";
 		return 1;
