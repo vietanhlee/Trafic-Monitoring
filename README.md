@@ -168,6 +168,24 @@ Chạy benchmark bằng cờ `--benchmark` (các đối số còn lại forward 
 
 Nếu chưa build, `run.sh` sẽ báo thiếu executable và yêu cầu chạy `./build.sh` trước.
 
+## 5) Cấu hình model & ngưỡng
+
+Thiết lập trong `include/app_config.h`:
+
+- `kVehicleModelPath = ../model/vehicle_int8.onnx`
+- `kPlateModelPath = ../model/plate_int8.onnx`
+- `kBrandCarModelPath = ../model/brand_car_classification.onnx`
+- `kOcrModelPath = ../model/model_ocr_plate.onnx`
+
+Thông số chính hiện tại:
+
+- OCR input: `64x128`, RGB, uint8, NHWC
+- Brand input: `224x224`, float32 NCHW
+- `kVehicleConfThresh = 0.55`
+- `kPlateConfThresh = 0.7`
+- `kOcrConfAvgThresh = 0.75`
+- `kNmsIouThresh = 0.45`
+
 ## 5) Docker
 
 Build image:
