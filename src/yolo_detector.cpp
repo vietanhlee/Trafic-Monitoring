@@ -1,10 +1,12 @@
 #include "yolo_detector_internal.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace yolo_detector {
 
@@ -32,13 +34,35 @@ std::vector<std::vector<Detection>> RunBatchNoSplit(
 	const int in_w = static_cast<int>(spec.w);
 
 	std::vector<cv::Mat> rgbs;
-	rgbs.reserve(bgr_images.size());
 	std::vector<LetterboxInfo> infos;
-	infos.reserve(bgr_images.size());
-	for (const auto& bgr : bgr_images) {
-		LetterboxInfo info;
-		rgbs.push_back(LetterboxToSizeRGB(bgr, in_w, in_h, info));
-		infos.push_back(info);
+	rgbs.resize(bgr_images.size());
+	infos.resize(bgr_images.size());
+
+	const size_t count = bgr_images.size();
+	const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+	const size_t worker_count = std::min(count, static_cast<size_t>(hw));
+	if (worker_count <= 1) {
+		for (size_t i = 0; i < count; ++i) {
+			rgbs[i] = LetterboxToSizeRGB(bgr_images[i], in_w, in_h, infos[i]);
+		}
+	} else {
+		std::atomic<size_t> next_index{0};
+		std::vector<std::thread> workers;
+		workers.reserve(worker_count);
+		for (size_t w = 0; w < worker_count; ++w) {
+			workers.emplace_back([&]() {
+				while (true) {
+					const size_t i = next_index.fetch_add(1, std::memory_order_relaxed);
+					if (i >= count) {
+						break;
+					}
+					rgbs[i] = LetterboxToSizeRGB(bgr_images[i], in_w, in_h, infos[i]);
+				}
+			});
+		}
+		for (auto& t : workers) {
+			t.join();
+		}
 	}
 
 	Ort::AllocatorWithDefaultOptions allocator;

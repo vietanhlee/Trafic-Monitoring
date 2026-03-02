@@ -6,12 +6,18 @@
 #include <vector>
 #include <algorithm>
 #include <cctype>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
 
 #include <onnxruntime_cxx_api.h>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include "app_config.h"
 #include "frame_annotator.h"
@@ -102,9 +108,59 @@ int ProcessOneVideo(
 		fs::create_directories(kOutputDir);
 	}
 	const std::string window_name = "OCR Plate - Video Output";
+	std::atomic<bool> stop_requested{ false };
+
+	std::mutex display_mutex;
+	std::condition_variable display_cv;
+	std::deque<cv::Mat> display_queue;
+	std::thread display_thread;
+	const size_t max_display_queue = static_cast<size_t>(std::max(1, app_config::kVideoDisplayQueueSize));
+
+	auto MakeDisplayFrame = [](const cv::Mat& src) {
+		const int max_w = std::max(1, app_config::kVideoPreviewMaxWidth);
+		if (src.cols <= max_w) {
+			return src.clone();
+		}
+		const double scale = static_cast<double>(max_w) / static_cast<double>(src.cols);
+		cv::Mat dst;
+		cv::resize(src, dst, cv::Size(), scale, scale, cv::INTER_LINEAR);
+		return dst;
+	};
+
 	if (show_output) {
-		cv::namedWindow(window_name, cv::WINDOW_NORMAL);
-		cv::resizeWindow(window_name, 1200, 800);
+		display_thread = std::thread([&]() {
+			cv::namedWindow(window_name, cv::WINDOW_NORMAL);
+			cv::resizeWindow(window_name, 1200, 800);
+
+			while (true) {
+				cv::Mat frame_to_show;
+				{
+					std::unique_lock<std::mutex> lock(display_mutex);
+					display_cv.wait(lock, [&]() {
+						return stop_requested.load(std::memory_order_relaxed) || !display_queue.empty();
+					});
+					if (display_queue.empty()) {
+						if (stop_requested.load(std::memory_order_relaxed)) {
+							break;
+						}
+						continue;
+					}
+					frame_to_show = std::move(display_queue.back());
+					display_queue.clear();
+				}
+
+				if (!frame_to_show.empty()) {
+					cv::imshow(window_name, frame_to_show);
+				}
+
+				const int key = cv::waitKey(1);
+				if (key == 27 || key == 'q' || key == 'Q') {
+					stop_requested.store(true, std::memory_order_relaxed);
+				}
+			}
+
+			cv::destroyWindow(window_name);
+		});
 	}
 
 	cv::Mat frame;
@@ -119,6 +175,13 @@ int ProcessOneVideo(
 
 	fs::path out_path;
 	cv::VideoWriter writer;
+	std::mutex writer_mutex;
+	std::condition_variable writer_cv;
+	std::deque<cv::Mat> writer_queue;
+	std::thread writer_thread;
+	std::atomic<bool> writer_stop{ false };
+	constexpr size_t kMaxWriterQueue = 8;
+	size_t dropped_writer_frames = 0;
 	if (save_output) {
 		out_path = kOutputDir / (video_path.stem().string() + "_annotated.mp4");
 		writer.open(
@@ -129,6 +192,32 @@ int ProcessOneVideo(
 		if (!writer.isOpened()) {
 			throw std::runtime_error("Khong mo duoc video writer: " + out_path.string());
 		}
+
+		writer_thread = std::thread([&]() {
+			while (true) {
+				cv::Mat frame_to_write;
+				bool popped = false;
+				{
+					std::unique_lock<std::mutex> lock(writer_mutex);
+					writer_cv.wait(lock, [&]() {
+						return writer_stop.load(std::memory_order_relaxed) || !writer_queue.empty();
+					});
+					if (writer_queue.empty()) {
+						if (writer_stop.load(std::memory_order_relaxed)) {
+							break;
+						}
+						continue;
+					}
+					frame_to_write = std::move(writer_queue.front());
+					writer_queue.pop_front();
+					popped = true;
+				}
+				if (popped) {
+					writer_cv.notify_one();
+				}
+				writer.write(frame_to_write);
+			}
+		});
 	}
 
 	size_t frame_count = 0;
@@ -143,6 +232,11 @@ int ProcessOneVideo(
 	bool has_cached_overlay = false;
 	const int infer_every_n = std::max(1, app_config::kVideoInferEveryNFrames);
 	while (true) {
+		if (stop_requested.load(std::memory_order_relaxed)) {
+			std::cout << "Dung som theo yeu cau nguoi dung (q/ESC)\n";
+			break;
+		}
+
 		auto loop_start = std::chrono::steady_clock::now();
 		double display_fps = fps_ema;
 		if (has_prev_loop_start) {
@@ -187,20 +281,33 @@ int ProcessOneVideo(
 
 		DrawFps(frame, display_fps);
 		if (save_output) {
-			writer.write(frame);
+			cv::Mat writer_frame = frame.clone();
+			{
+				std::unique_lock<std::mutex> lock(writer_mutex);
+				if (show_output && writer_queue.size() >= kMaxWriterQueue) {
+					writer_queue.pop_front();
+					++dropped_writer_frames;
+				} else {
+					while (writer_queue.size() >= kMaxWriterQueue && !stop_requested.load(std::memory_order_relaxed)) {
+						writer_cv.wait_for(lock, std::chrono::milliseconds(2));
+					}
+				}
+				writer_queue.emplace_back(std::move(writer_frame));
+			}
+			writer_cv.notify_one();
 		}
 		if (show_output) {
-			cv::imshow(window_name, frame);
+			cv::Mat display_frame = MakeDisplayFrame(frame);
+			{
+				std::lock_guard<std::mutex> lock(display_mutex);
+				display_queue.emplace_back(std::move(display_frame));
+				while (display_queue.size() > max_display_queue) {
+					display_queue.pop_front();
+				}
+			}
+			display_cv.notify_one();
 		}
 		++frame_count;
-
-		if (show_output) {
-			const int key = cv::waitKey(1);
-			if (key == 27 || key == 'q' || key == 'Q') {
-				std::cout << "Dung som theo yeu cau nguoi dung (q/ESC)\n";
-				break;
-			}
-		}
 
 		if (frame_count % 30 == 0) {
 			std::cout << "Da xu ly " << frame_count << " frame\n";
@@ -211,11 +318,25 @@ int ProcessOneVideo(
 		}
 	}
 	if (show_output) {
-		cv::destroyWindow(window_name);
+		stop_requested.store(true, std::memory_order_relaxed);
+		display_cv.notify_all();
+		if (display_thread.joinable()) {
+			display_thread.join();
+		}
+	}
+	if (save_output) {
+		writer_stop.store(true, std::memory_order_relaxed);
+		writer_cv.notify_all();
+		if (writer_thread.joinable()) {
+			writer_thread.join();
+		}
 	}
 
 	if (save_output) {
 		std::cout << "Da ghi output video: " << out_path.string() << " (" << frame_count << " frame)\n";
+		if (dropped_writer_frames > 0) {
+			std::cout << "(note) Bo qua " << dropped_writer_frames << " frame khi ghi de giu realtime\n";
+		}
 	} else {
 		std::cout << "--nosave: bo qua ghi file output video\n";
 	}

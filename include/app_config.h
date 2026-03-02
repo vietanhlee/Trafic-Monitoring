@@ -24,11 +24,11 @@ inline constexpr int kBrandInputW = 224;
 
 // Ngưỡng confidence
 inline constexpr float kVehicleConfThresh = 0.55f;
-inline constexpr float kPlateConfThresh = 0.7f;
+inline constexpr float kPlateConfThresh = 0.65f;
 inline constexpr float kOcrConfAvgThresh = 0.75f;
 
 // NMS IoU threshold (dùng cho standard YOLO output)
-inline constexpr float kNmsIouThresh = 0.45f;
+inline constexpr float kNmsIouThresh = 0.15f;
 
 // Ký tự cuối '_' là blank cho CTC.
 inline const std::string kAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_";
@@ -37,6 +37,12 @@ inline const std::string kAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_";
 inline constexpr const char* kDefaultImagePath = "../img/1.jpeg";
 
 // Video: cứ mỗi N frame mới chạy inference 1 lần, các frame còn lại tái dùng overlay gần nhất
-inline constexpr int kVideoInferEveryNFrames = 5;
+inline constexpr int kVideoInferEveryNFrames = 12;
+
+// Show video: giới hạn chiều rộng preview để giảm copy/render khi --show
+inline constexpr int kVideoPreviewMaxWidth = 960;
+
+// Queue preview frame cho thread hiển thị
+inline constexpr int kVideoDisplayQueueSize = 4;
 
 } // namespace app_config
