@@ -44,4 +44,10 @@ std::vector<std::vector<Detection>> RunBatch(
 	float conf_threshold,
 	float nms_iou_threshold = 0.35f);
 
+std::vector<Detection> RunSingle(
+	Ort::Session& session,
+	const cv::Mat& bgr_image,
+	float conf_threshold,
+	float nms_iou_threshold = 0.35f);
+
 } // namespace yolo_detector

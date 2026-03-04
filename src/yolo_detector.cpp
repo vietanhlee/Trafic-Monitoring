@@ -185,4 +185,13 @@ std::vector<std::vector<Detection>> RunBatch(
 	return RunBatchNoSplit(session, bgr_images, conf_threshold, nms_iou_threshold);
 }
 
+std::vector<Detection> RunSingle(
+	Ort::Session& session,
+	const cv::Mat& bgr_image,
+	float conf_threshold,
+	float nms_iou_threshold) {
+	auto out = RunBatchNoSplit(session, {bgr_image}, conf_threshold, nms_iou_threshold);
+	return std::move(out[0]);
+}
+
 } // namespace yolo_detector

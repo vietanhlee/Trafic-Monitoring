@@ -223,11 +223,11 @@ int ProcessOneVideo(
 	size_t frame_count = 0;
 	double total_infer_sec = 0.0;
 	size_t infer_count = 0;
-	double total_loop_interval_sec = 0.0;
-	auto prev_loop_start = std::chrono::steady_clock::now();
-	bool has_prev_loop_start = false;
 	double fps_ema = 0.0;
 	constexpr double kFpsEmaAlpha = 0.15;
+	// Timestamp đầu vòng lặp của lần infer gần nhất (để tính interval giữa 2 infer)
+	auto prev_infer_loop_start = std::chrono::steady_clock::now();
+	bool has_prev_infer = false;
 	FrameOverlayResult cached_overlay;
 	bool has_cached_overlay = false;
 	const int infer_every_n = std::max(1, app_config::kVideoInferEveryNFrames);
@@ -238,25 +238,25 @@ int ProcessOneVideo(
 		}
 
 		auto loop_start = std::chrono::steady_clock::now();
-		double display_fps = fps_ema;
-		if (has_prev_loop_start) {
-			const double loop_interval = std::chrono::duration<double>(loop_start - prev_loop_start).count();
-			if (loop_interval > 0.0) {
-				const double inst_fps = 1.0 / loop_interval;
-				total_loop_interval_sec += loop_interval;
-				if (fps_ema <= 0.0) {
-					fps_ema = inst_fps;
-				} else {
-					fps_ema = fps_ema * (1.0 - kFpsEmaAlpha) + inst_fps * kFpsEmaAlpha;
-				}
-				display_fps = fps_ema;
-			}
-		}
-		prev_loop_start = loop_start;
-		has_prev_loop_start = true;
+		// FPS hiển thị dùng fps_ema đã tính tại lần infer gần nhất trước frame này
+		const double display_fps = fps_ema;
 
 		const bool run_infer = (frame_count % static_cast<size_t>(infer_every_n) == 0);
 		if (run_infer) {
+			// Cập nhật FPS từ interval giữa 2 lần infer liên tiếp:
+			// infer_every_n frame mất bao lâu → fps = infer_every_n / interval
+			if (has_prev_infer) {
+				const double infer_interval = std::chrono::duration<double>(loop_start - prev_infer_loop_start).count();
+				if (infer_interval > 0.0) {
+					const double inst_fps = static_cast<double>(infer_every_n) / infer_interval;
+					fps_ema = (fps_ema <= 0.0)
+						? inst_fps
+						: fps_ema * (1.0 - kFpsEmaAlpha) + inst_fps * kFpsEmaAlpha;
+				}
+			}
+			prev_infer_loop_start = loop_start;
+			has_prev_infer = true;
+
 			auto infer_t0 = std::chrono::steady_clock::now();
 			try {
 				has_cached_overlay = InferFrameOverlay(
@@ -340,11 +340,7 @@ int ProcessOneVideo(
 	} else {
 		std::cout << "--nosave: bo qua ghi file output video\n";
 	}
-	if (frame_count > 1 && total_loop_interval_sec > 0.0) {
-		const double avg_display_fps = static_cast<double>(frame_count - 1) / total_loop_interval_sec;
-		const double avg_display_ms = (total_loop_interval_sec / static_cast<double>(frame_count - 1)) * 1000.0;
-		std::printf("=== FPS trung binh (video loop): %.2f FPS (%.1f ms/frame) ===\n", avg_display_fps, avg_display_ms);
-	}
+
 	if (infer_count > 0 && total_infer_sec > 0.0) {
 		const double infer_avg_ms = (total_infer_sec / static_cast<double>(infer_count)) * 1000.0;
 		const double infer_fps = static_cast<double>(infer_count) / total_infer_sec;

@@ -2,9 +2,11 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <future>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <onnxruntime_cxx_api.h>
@@ -13,8 +15,9 @@
 
 #include "app_config.h"
 #include "brand_classifier.h"
-#include "image_preprocess.h"
+#include "frame_annotator.h"
 #include "ocr_batch.h"
+#include "utils/plate_parallel.h"
 #include "yolo_detector.h"
 
 namespace fs = std::filesystem;
@@ -29,14 +32,41 @@ struct BenchmarkOptions {
 
 struct StageMetrics {
 	double vehicle_detect_ms = 0.0;
+	double vehicle_crop_ms = 0.0;
+	double brand_branch_ms = 0.0;
 	double brand_classify_ms = 0.0;
+	double plate_branch_ms = 0.0;
 	double plate_detect_ms = 0.0;
+	double plate_map_ms = 0.0;
+	double plate_crop_preprocess_ms = 0.0;
 	double plate_ocr_ms = 0.0;
+	double merge_ms = 0.0;
 	double total_ms = 0.0;
 	size_t vehicles_detected = 0;
 	size_t vehicles_used = 0;
+	size_t cars_used = 0;
 	size_t plates_detected = 0;
 };
+
+struct PlateBranchResult {
+	std::vector<ocr_batch::OcrText> texts;
+	std::vector<yolo_detector::Detection> plate_boxes_in_image;
+	std::vector<bool> vehicle_has_plate;
+	bool has_any_plate = false;
+	double branch_ms = 0.0;
+	double plate_detect_ms = 0.0;
+	double map_ms = 0.0;
+	double crop_preprocess_ms = 0.0;
+	double ocr_ms = 0.0;
+};
+
+struct BrandBranchResult {
+	std::vector<brand_classifier::BrandResult> brand_results;
+	double branch_ms = 0.0;
+	double classify_ms = 0.0;
+};
+
+cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h);
 
 void PrintUsage(const char* prog) {
 	std::cout
@@ -122,10 +152,13 @@ StageMetrics RunPipelineOnce(
 		return m;
 	}
 
+	const auto t_crop_0 = std::chrono::steady_clock::now();
 	std::vector<cv::Mat> vehicle_crops;
 	std::vector<cv::Rect> vehicle_rects;
+	std::vector<yolo_detector::Detection> vehicles_used;
 	vehicle_crops.reserve(vehicles.size());
 	vehicle_rects.reserve(vehicles.size());
+	vehicles_used.reserve(vehicles.size());
 	for (const auto& v : vehicles) {
 		const float box_h = v.y2 - v.y1;
 		const float expand_y2 = v.y2 + box_h * 0.05f;
@@ -134,50 +167,163 @@ StageMetrics RunPipelineOnce(
 			continue;
 		}
 		vehicle_rects.push_back(r);
-		vehicle_crops.push_back(bgr(r));
+		vehicle_crops.push_back(bgr(r).clone());
+		yolo_detector::Detection v_expanded = v;
+		v_expanded.y2 = std::min(expand_y2, static_cast<float>(bgr.rows));
+		vehicles_used.push_back(v_expanded);
 	}
+	const auto t_crop_1 = std::chrono::steady_clock::now();
+	m.vehicle_crop_ms = ElapsedMs(t_crop_0, t_crop_1);
 	m.vehicles_used = vehicle_crops.size();
 	if (vehicle_crops.empty()) {
 		m.total_ms = ElapsedMs(total_t0, std::chrono::steady_clock::now());
 		return m;
 	}
 
-	const auto t_brand_0 = std::chrono::steady_clock::now();
-	(void)brand_classifier::ClassifyBatch(brand_sess, vehicle_crops, app_config::kBrandInputH, app_config::kBrandInputW);
-	const auto t_brand_1 = std::chrono::steady_clock::now();
-	m.brand_classify_ms = ElapsedMs(t_brand_0, t_brand_1);
-
-	const auto t_plate_0 = std::chrono::steady_clock::now();
-	auto plates_per_vehicle = yolo_detector::RunBatch(plate_sess, vehicle_crops, app_config::kPlateConfThresh, app_config::kNmsIouThresh);
-	const auto t_plate_1 = std::chrono::steady_clock::now();
-	m.plate_detect_ms = ElapsedMs(t_plate_0, t_plate_1);
-
-	std::vector<cv::Mat> plate_rgb_ocr;
-	for (size_t i = 0; i < plates_per_vehicle.size(); ++i) {
-		const auto& dets = plates_per_vehicle[i];
-		const cv::Rect& vr = vehicle_rects[i];
-		for (const auto& p : dets) {
-			yolo_detector::Detection in_img = p;
-			in_img.x1 += static_cast<float>(vr.x);
-			in_img.y1 += static_cast<float>(vr.y);
-			in_img.x2 += static_cast<float>(vr.x);
-			in_img.y2 += static_cast<float>(vr.y);
-			cv::Rect pr = ToRectClamped(in_img.x1, in_img.y1, in_img.x2, in_img.y2, bgr.cols, bgr.rows);
-			if (pr.width <= 2 || pr.height <= 2) {
-				continue;
-			}
-			cv::Mat plate_bgr = bgr(pr);
-			plate_rgb_ocr.push_back(image_preprocess::PreprocessMatRgbU8Hwc(plate_bgr, app_config::kInputW, app_config::kInputH));
+	std::vector<size_t> car_indices;
+	std::vector<cv::Mat> car_crops;
+	car_indices.reserve(vehicles_used.size());
+	car_crops.reserve(vehicles_used.size());
+	for (size_t i = 0; i < vehicles_used.size(); ++i) {
+		if (vehicles_used[i].cls == 0) {
+			car_indices.push_back(i);
+			car_crops.push_back(vehicle_crops[i]);
 		}
 	}
-	m.plates_detected = plate_rgb_ocr.size();
+	m.cars_used = car_crops.size();
 
-	if (!plate_rgb_ocr.empty()) {
-		const auto t_ocr_0 = std::chrono::steady_clock::now();
-		(void)ocr_batch::RunBatch(ocr_sess, plate_rgb_ocr, app_config::kAlphabet);
-		const auto t_ocr_1 = std::chrono::steady_clock::now();
-		m.plate_ocr_ms = ElapsedMs(t_ocr_0, t_ocr_1);
+	auto brand_future = std::async(std::launch::async, [&]() {
+		BrandBranchResult br;
+		const auto t_branch_0 = std::chrono::steady_clock::now();
+		if (!car_crops.empty()) {
+			const auto t_cls_0 = std::chrono::steady_clock::now();
+			br.brand_results = brand_classifier::ClassifyBatch(
+				brand_sess,
+				car_crops,
+				app_config::kBrandInputH,
+				app_config::kBrandInputW);
+			const auto t_cls_1 = std::chrono::steady_clock::now();
+			br.classify_ms = ElapsedMs(t_cls_0, t_cls_1);
+		}
+		const auto t_branch_1 = std::chrono::steady_clock::now();
+		br.branch_ms = ElapsedMs(t_branch_0, t_branch_1);
+		return br;
+	});
+
+	auto plate_future = std::async(std::launch::async, [&]() {
+		PlateBranchResult pr;
+		pr.vehicle_has_plate.assign(vehicle_rects.size(), false);
+		const auto t_branch_0 = std::chrono::steady_clock::now();
+
+		const auto t_plate_0 = std::chrono::steady_clock::now();
+		auto plates_per_vehicle = plate_parallel::DetectPlatesPerVehicleParallel(
+			plate_sess,
+			vehicle_crops,
+			app_config::kPlateConfThresh,
+			app_config::kNmsIouThresh);
+		const auto t_plate_1 = std::chrono::steady_clock::now();
+		pr.plate_detect_ms = ElapsedMs(t_plate_0, t_plate_1);
+
+		std::vector<plate_parallel::PlateCandidate> candidates = plate_parallel::BuildPlateCandidatesParallel(plates_per_vehicle, vehicle_crops);
+
+		auto map_future = std::async(std::launch::async, [&]() {
+			const auto t_map_0 = std::chrono::steady_clock::now();
+			std::vector<yolo_detector::Detection> mapped;
+			mapped.reserve(candidates.size());
+			std::vector<bool> has_plate(vehicle_rects.size(), false);
+			for (const auto& c : candidates) {
+				const cv::Rect& vr = vehicle_rects[c.vehicle_index];
+				yolo_detector::Detection in_img = c.plate_in_vehicle;
+				in_img.x1 += static_cast<float>(vr.x);
+				in_img.y1 += static_cast<float>(vr.y);
+				in_img.x2 += static_cast<float>(vr.x);
+				in_img.y2 += static_cast<float>(vr.y);
+				mapped.push_back(std::move(in_img));
+				has_plate[c.vehicle_index] = true;
+			}
+			const auto t_map_1 = std::chrono::steady_clock::now();
+			return std::make_tuple(std::move(mapped), std::move(has_plate), ElapsedMs(t_map_0, t_map_1));
+		});
+
+		auto crop_future = std::async(std::launch::async, [&]() {
+			const auto t_crop_0 = std::chrono::steady_clock::now();
+			std::vector<cv::Mat> plate_rgb_ocr = plate_parallel::PreprocessPlatesParallel(candidates, vehicle_crops, app_config::kInputW, app_config::kInputH);
+			const auto t_crop_1 = std::chrono::steady_clock::now();
+			return std::make_pair(std::move(plate_rgb_ocr), ElapsedMs(t_crop_0, t_crop_1));
+		});
+
+		auto mapped_out = map_future.get();
+		pr.plate_boxes_in_image = std::move(std::get<0>(mapped_out));
+		pr.vehicle_has_plate = std::move(std::get<1>(mapped_out));
+		pr.map_ms = std::get<2>(mapped_out);
+
+		auto crop_out = crop_future.get();
+		std::vector<cv::Mat> plate_rgb_ocr = std::move(crop_out.first);
+		pr.crop_preprocess_ms = crop_out.second;
+
+		if (!plate_rgb_ocr.empty()) {
+			const auto t_ocr_0 = std::chrono::steady_clock::now();
+			pr.texts = ocr_batch::RunBatch(ocr_sess, plate_rgb_ocr, app_config::kAlphabet);
+			const auto t_ocr_1 = std::chrono::steady_clock::now();
+			pr.ocr_ms = ElapsedMs(t_ocr_0, t_ocr_1);
+			if (pr.texts.size() != pr.plate_boxes_in_image.size()) {
+				throw std::runtime_error("Loi noi bo: so OCR text != so plate boxes");
+			}
+			pr.has_any_plate = true;
+		}
+
+		const auto t_branch_1 = std::chrono::steady_clock::now();
+		pr.branch_ms = ElapsedMs(t_branch_0, t_branch_1);
+		return pr;
+	});
+
+	BrandBranchResult brand_result = brand_future.get();
+	PlateBranchResult plate_result = plate_future.get();
+	m.brand_branch_ms = brand_result.branch_ms;
+	m.brand_classify_ms = brand_result.classify_ms;
+	m.plate_branch_ms = plate_result.branch_ms;
+	m.plate_detect_ms = plate_result.plate_detect_ms;
+	m.plate_map_ms = plate_result.map_ms;
+	m.plate_crop_preprocess_ms = plate_result.crop_preprocess_ms;
+	m.plate_ocr_ms = plate_result.ocr_ms;
+	m.plates_detected = plate_result.plate_boxes_in_image.size();
+
+	const auto t_merge_0 = std::chrono::steady_clock::now();
+	std::vector<int> brand_id_per_vehicle(vehicles_used.size(), -1);
+	for (size_t k = 0; k < car_indices.size(); ++k) {
+		brand_id_per_vehicle[car_indices[k]] = brand_result.brand_results[k].class_id;
 	}
+	std::vector<VehicleOverlayResult> vehicles_overlay;
+	std::vector<PlateOverlayResult> plates_overlay;
+	vehicles_overlay.reserve(vehicles_used.size());
+	plates_overlay.reserve(plate_result.texts.size());
+
+	if (!plate_result.has_any_plate) {
+		for (size_t i = 0; i < vehicles_used.size(); ++i) {
+			VehicleOverlayResult v;
+			v.det = vehicles_used[i];
+			v.has_plate = false;
+			v.brand_id = brand_id_per_vehicle[i];
+			vehicles_overlay.push_back(v);
+		}
+	} else {
+		for (size_t i = 0; i < vehicles_used.size(); ++i) {
+			VehicleOverlayResult v;
+			v.det = vehicles_used[i];
+			v.has_plate = plate_result.vehicle_has_plate[i];
+			v.brand_id = brand_id_per_vehicle[i];
+			vehicles_overlay.push_back(v);
+		}
+		for (size_t i = 0; i < plate_result.texts.size(); ++i) {
+			PlateOverlayResult p;
+			p.det = plate_result.plate_boxes_in_image[i];
+			p.text = plate_result.texts[i].text;
+			p.conf_avg = plate_result.texts[i].conf_avg;
+			plates_overlay.push_back(std::move(p));
+		}
+	}
+	const auto t_merge_1 = std::chrono::steady_clock::now();
+	m.merge_ms = ElapsedMs(t_merge_0, t_merge_1);
 
 	m.total_ms = ElapsedMs(total_t0, std::chrono::steady_clock::now());
 	return m;
@@ -246,53 +392,87 @@ int main(int argc, char** argv) {
 		}
 
 		double sum_vehicle = 0.0;
+		double sum_vehicle_crop = 0.0;
+		double sum_brand_branch = 0.0;
 		double sum_brand = 0.0;
+		double sum_plate_branch = 0.0;
 		double sum_plate = 0.0;
+		double sum_plate_map = 0.0;
+		double sum_plate_crop = 0.0;
 		double sum_ocr = 0.0;
+		double sum_merge = 0.0;
 		double sum_total = 0.0;
 		double sum_vehicles = 0.0;
+		double sum_cars = 0.0;
 		double sum_plates = 0.0;
 
 		std::cout << "\n=== Per-run (ms) ===\n";
 		for (size_t i = 0; i < runs.size(); ++i) {
 			const auto& r = runs[i];
 			sum_vehicle += r.vehicle_detect_ms;
+			sum_vehicle_crop += r.vehicle_crop_ms;
+			sum_brand_branch += r.brand_branch_ms;
 			sum_brand += r.brand_classify_ms;
+			sum_plate_branch += r.plate_branch_ms;
 			sum_plate += r.plate_detect_ms;
+			sum_plate_map += r.plate_map_ms;
+			sum_plate_crop += r.plate_crop_preprocess_ms;
 			sum_ocr += r.plate_ocr_ms;
+			sum_merge += r.merge_ms;
 			sum_total += r.total_ms;
 			sum_vehicles += static_cast<double>(r.vehicles_used);
+			sum_cars += static_cast<double>(r.cars_used);
 			sum_plates += static_cast<double>(r.plates_detected);
 
 			std::cout
 				<< "run " << (i + 1)
 				<< " | vehicle=" << r.vehicle_detect_ms
+				<< " | v_crop=" << r.vehicle_crop_ms
+				<< " | brand_branch=" << r.brand_branch_ms
 				<< " | brand=" << r.brand_classify_ms
+				<< " | plate_branch=" << r.plate_branch_ms
 				<< " | plate=" << r.plate_detect_ms
+				<< " | p_map=" << r.plate_map_ms
+				<< " | p_crop=" << r.plate_crop_preprocess_ms
 				<< " | ocr=" << r.plate_ocr_ms
+				<< " | merge=" << r.merge_ms
 				<< " | total=" << r.total_ms
 				<< " | vehicles=" << r.vehicles_used
+				<< " | cars=" << r.cars_used
 				<< " | plates=" << r.plates_detected
 				<< "\n";
 		}
 
 		const double denom = static_cast<double>(runs.size());
 		const double avg_vehicle = sum_vehicle / denom;
+		const double avg_vehicle_crop = sum_vehicle_crop / denom;
+		const double avg_brand_branch = sum_brand_branch / denom;
 		const double avg_brand = sum_brand / denom;
+		const double avg_plate_branch = sum_plate_branch / denom;
 		const double avg_plate = sum_plate / denom;
+		const double avg_plate_map = sum_plate_map / denom;
+		const double avg_plate_crop = sum_plate_crop / denom;
 		const double avg_ocr = sum_ocr / denom;
+		const double avg_merge = sum_merge / denom;
 		const double avg_total = sum_total / denom;
 
 		std::cout << "\n=== Average (ms) ===\n";
 		std::cout << "vehicle detect : " << avg_vehicle << "\n";
+		std::cout << "vehicle crop   : " << avg_vehicle_crop << "\n";
+		std::cout << "brand branch   : " << avg_brand_branch << "\n";
 		std::cout << "brand classify : " << avg_brand << "\n";
+		std::cout << "plate branch   : " << avg_plate_branch << "\n";
 		std::cout << "plate detect   : " << avg_plate << "\n";
+		std::cout << "plate map      : " << avg_plate_map << "\n";
+		std::cout << "plate crop/pre : " << avg_plate_crop << "\n";
 		std::cout << "plate ocr      : " << avg_ocr << "\n";
+		std::cout << "merge          : " << avg_merge << "\n";
 		std::cout << "total pipeline : " << avg_total << "\n";
 		if (avg_total > 0.0) {
 			std::cout << "avg fps (infer only): " << (1000.0 / avg_total) << "\n";
 		}
 		std::cout << "avg vehicles used  : " << (sum_vehicles / denom) << "\n";
+		std::cout << "avg cars used      : " << (sum_cars / denom) << "\n";
 		std::cout << "avg plates detected: " << (sum_plates / denom) << "\n";
 
 		return 0;

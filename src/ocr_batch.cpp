@@ -1,11 +1,14 @@
 #include "ocr_batch.h"
 
+#include <algorithm>
 #include <cstring>
+#include <future>
 #include <stdexcept>
 
 #include "post_process_out_string.h"
 
 #include "utils/onnx_decode_utils.h"
+#include "utils/parallel_utils.h"
 
 namespace ocr_batch {
 namespace {
@@ -89,6 +92,35 @@ float ComputeAvgConfNonBlank(const std::vector<int64_t>& indices, const std::vec
 	return (cnt == 0) ? 0.0f : static_cast<float>(sum / static_cast<double>(cnt));
 }
 
+std::vector<OcrText> RunFixedBatchOneParallel(
+	Ort::Session& session,
+	const std::vector<cv::Mat>& rgb_u8_hwc,
+	const std::string& alphabet) {
+	std::vector<OcrText> all(rgb_u8_hwc.size());
+	const size_t worker_count = parallel_utils::ResolveWorkerCount(rgb_u8_hwc.size());
+	const size_t chunk = (rgb_u8_hwc.size() + worker_count - 1) / worker_count;
+
+	std::vector<std::future<void>> workers;
+	workers.reserve(worker_count);
+	for (size_t w = 0; w < worker_count; ++w) {
+		const size_t begin = w * chunk;
+		if (begin >= rgb_u8_hwc.size()) {
+			break;
+		}
+		const size_t end = std::min(rgb_u8_hwc.size(), begin + chunk);
+		workers.push_back(std::async(std::launch::async, [&, begin, end]() {
+			for (size_t i = begin; i < end; ++i) {
+				auto out = RunBatch(session, {rgb_u8_hwc[i]}, alphabet);
+				all[i] = std::move(out[0]);
+			}
+		}));
+	}
+	for (auto& t : workers) {
+		t.get();
+	}
+	return all;
+}
+
 } // namespace
 
 std::vector<OcrText> RunBatch(
@@ -106,13 +138,7 @@ std::vector<OcrText> RunBatch(
 	if (input_shape.size() == 4 && input_shape[0] > 0) {
 		const int64_t fixed_batch = input_shape[0];
 		if (fixed_batch == 1 && rgb_u8_hwc.size() > 1) {
-			std::vector<OcrText> all;
-			all.reserve(rgb_u8_hwc.size());
-			for (const auto& one : rgb_u8_hwc) {
-				auto out = RunBatch(session, std::vector<cv::Mat>{one}, alphabet);
-				all.push_back(std::move(out.at(0)));
-			}
-			return all;
+			return RunFixedBatchOneParallel(session, rgb_u8_hwc, alphabet);
 		}
 		if (fixed_batch > 1 && static_cast<int64_t>(rgb_u8_hwc.size()) != fixed_batch) {
 			throw std::runtime_error("OCR model fix batch=" + std::to_string(fixed_batch) + ", nhung input batch=" + std::to_string(rgb_u8_hwc.size()));

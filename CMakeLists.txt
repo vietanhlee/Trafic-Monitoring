@@ -25,6 +25,8 @@ add_executable(main
 	src/yolo_postprocess.cpp
 	src/ocr_batch.cpp
 	src/brand_classifier.cpp
+	src/utils/plate_parallel.cpp
+	src/utils/parallel_utils.cpp
 	src/utils/cli_args.cpp
 	src/utils/ocr_report.cpp
 	src/utils/onnx_decode_utils.cpp
@@ -41,6 +43,8 @@ add_executable(benchmark
 	src/yolo_postprocess.cpp
 	src/ocr_batch.cpp
 	src/brand_classifier.cpp
+	src/utils/plate_parallel.cpp
+	src/utils/parallel_utils.cpp
 	src/utils/ocr_report.cpp
 	src/utils/onnx_decode_utils.cpp
 )

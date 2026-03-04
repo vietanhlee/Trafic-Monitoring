@@ -13,4 +13,5 @@ test.cpp
 todo.md
 *.jpeg
 temp.*
+*.mp4
 .vscode/

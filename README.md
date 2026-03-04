@@ -163,7 +163,7 @@ Ví dụ:
 Chạy benchmark bằng cờ `--benchmark` (các đối số còn lại forward cho binary benchmark):
 
 ```bash
-./run.sh --benchmark --image img/1.jpeg --warmup 3 --runs 10
+../run.sh --benchmark --image ../img/10.jpeg --warmup 3 --runs 10
 ```
 
 Nếu chưa build, `run.sh` sẽ báo thiếu executable và yêu cầu chạy `./build.sh` trước.

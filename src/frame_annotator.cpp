@@ -14,8 +14,8 @@
 
 #include "app_config.h"
 #include "brand_classifier.h"
-#include "image_preprocess.h"
 #include "ocr_batch.h"
+#include "utils/plate_parallel.h"
 #include "yolo_detector.h"
 
 namespace {
@@ -135,12 +135,6 @@ struct PlatePipelineResult {
 	bool has_any_plate = false;
 };
 
-struct PlateCandidate {
-	size_t vehicle_index = 0;
-	yolo_detector::Detection plate_in_vehicle;
-	cv::Rect plate_rect_in_vehicle;
-};
-
 PlatePipelineResult RunPlatePipeline(
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
@@ -149,28 +143,12 @@ PlatePipelineResult RunPlatePipeline(
 	PlatePipelineResult result;
 	result.vehicle_has_plate.assign(vehicle_rects.size(), false);
 
-	auto plates_per_vehicle = yolo_detector::RunBatch(plate_sess, vehicle_crops, app_config::kPlateConfThresh, app_config::kNmsIouThresh);
-	std::vector<PlateCandidate> candidates;
-	for (size_t i = 0; i < plates_per_vehicle.size(); ++i) {
-		const auto& dets = plates_per_vehicle[i];
-		for (const auto& p : dets) {
-			cv::Rect pr_local = ToRectClamped(
-				p.x1,
-				p.y1,
-				p.x2,
-				p.y2,
-				vehicle_crops[i].cols,
-				vehicle_crops[i].rows);
-			if (pr_local.width <= 2 || pr_local.height <= 2) {
-				continue;
-			}
-			PlateCandidate c;
-			c.vehicle_index = i;
-			c.plate_in_vehicle = p;
-			c.plate_rect_in_vehicle = pr_local;
-			candidates.push_back(std::move(c));
-		}
-	}
+	auto plates_per_vehicle = plate_parallel::DetectPlatesPerVehicleParallel(
+		plate_sess,
+		vehicle_crops,
+		app_config::kPlateConfThresh,
+		app_config::kNmsIouThresh);
+	std::vector<plate_parallel::PlateCandidate> candidates = plate_parallel::BuildPlateCandidatesParallel(plates_per_vehicle, vehicle_crops);
 
 	auto map_future = std::async(std::launch::async, [&]() {
 		std::vector<yolo_detector::Detection> mapped;
@@ -190,15 +168,7 @@ PlatePipelineResult RunPlatePipeline(
 	});
 
 	auto crop_future = std::async(std::launch::async, [&]() {
-		std::vector<cv::Mat> plate_rgb_ocr;
-		plate_rgb_ocr.reserve(candidates.size());
-		for (const auto& c : candidates) {
-			const cv::Mat& vehicle_bgr = vehicle_crops[c.vehicle_index];
-			cv::Mat plate_bgr = vehicle_bgr(c.plate_rect_in_vehicle);
-			cv::Mat plate_rgb = image_preprocess::PreprocessMatRgbU8Hwc(plate_bgr, app_config::kInputW, app_config::kInputH);
-			plate_rgb_ocr.push_back(std::move(plate_rgb));
-		}
-		return plate_rgb_ocr;
+		return plate_parallel::PreprocessPlatesParallel(candidates, vehicle_crops, app_config::kInputW, app_config::kInputH);
 	});
 
 	auto mapped_out = map_future.get();
@@ -304,10 +274,23 @@ bool InferFrameOverlay(
 		return false;
 	}
 
+	// Chỉ đưa car (cls == 0) vào brand classifier
+	std::vector<size_t> car_indices;
+	std::vector<cv::Mat> car_crops;
+	for (size_t i = 0; i < vehicles_used.size(); ++i) {
+		if (vehicles_used[i].cls == 0) {
+			car_indices.push_back(i);
+			car_crops.push_back(vehicle_crops[i]);
+		}
+	}
+
 	auto brand_future = std::async(std::launch::async, [&]() {
+		if (car_crops.empty()) {
+			return std::vector<brand_classifier::BrandResult>{};
+		}
 		return brand_classifier::ClassifyBatch(
 			brand_sess,
-			vehicle_crops,
+			car_crops,
 			app_config::kBrandInputH,
 			app_config::kBrandInputW);
 	});
@@ -316,19 +299,24 @@ bool InferFrameOverlay(
 		return RunPlatePipeline(plate_sess, ocr_sess, vehicle_crops, vehicle_rects);
 	});
 
-	std::vector<brand_classifier::BrandResult> brand_results = brand_future.get();
-	if (brand_results.size() != vehicle_crops.size()) {
-		throw std::runtime_error("Loi noi bo: so ket qua brand != so vehicle crops");
+	// Map kết quả brand về đúng vehicle index (chỉ car có brand, motor thì -1)
+	std::vector<brand_classifier::BrandResult> car_brand_results = brand_future.get();
+	std::vector<int> brand_id_per_vehicle(vehicles_used.size(), -1);
+	for (size_t k = 0; k < car_indices.size(); ++k) {
+		brand_id_per_vehicle[car_indices[k]] = car_brand_results[k].class_id;
 	}
 
 	PlatePipelineResult plate_result = plate_future.get();
 
 	if (verbose) {
-		for (size_t i = 0; i < brand_results.size(); ++i) {
-			std::cout
-				<< "vehicle " << i
-				<< ": brand=" << brand_results[i].class_id << "(" << BrandClassName(brand_results[i].class_id) << ")"
-				<< " brand_conf=" << brand_results[i].conf << "\n";
+		for (size_t i = 0; i < vehicles_used.size(); ++i) {
+			const int bid = brand_id_per_vehicle[i];
+			if (bid >= 0) {
+				std::cout
+					<< "vehicle " << i
+					<< ": brand=" << bid << "(" << BrandClassName(bid) << ")"
+					<< "\n";
+			}
 		}
 	}
 
@@ -340,7 +328,7 @@ bool InferFrameOverlay(
 			VehicleOverlayResult v;
 			v.det = vehicles_used[i];
 			v.has_plate = false;
-			v.brand_id = brand_results[i].class_id;
+			v.brand_id = brand_id_per_vehicle[i];
 			out_overlay.vehicles.push_back(v);
 		}
 		return true;
@@ -350,7 +338,7 @@ bool InferFrameOverlay(
 		VehicleOverlayResult v;
 		v.det = vehicles_used[i];
 		v.has_plate = plate_result.vehicle_has_plate[i];
-		v.brand_id = brand_results[i].class_id;
+		v.brand_id = brand_id_per_vehicle[i];
 		out_overlay.vehicles.push_back(v);
 	}
 
