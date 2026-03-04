@@ -1,220 +1,180 @@
-# Trafic-Monitoring (C++ / ONNX Runtime / OpenCV)
+# Traffic Monitoring OCR Plate (C++ / ONNX Runtime / OpenCV)
 
-Dự án Trafic-Monitoring nhận diện phương tiện, phân loại hãng xe và OCR biển số bằng C++ với ONNX Runtime + OpenCV.
+Dự án nhận diện phương tiện, phân loại hãng xe và OCR biển số bằng C++ với ONNX Runtime + OpenCV.
 
-## Pipeline xử lý (chi tiết)
+## 1) Tổng quan pipeline
 
-Đầu vào hỗ trợ 3 chế độ: `--image`, `--folder`, `--video`.
+Hỗ trợ input: `--image`, `--folder`, `--video`.
 
-Luồng xử lý cho mỗi frame/ảnh:
+Luồng xử lý mỗi frame/ảnh:
 
-1. **Vehicle Detection (YOLO)**
-   - Tìm các phương tiện trong ảnh/frame.
-2. **Crop Vehicle ROI**
-   - Cắt từng vùng phương tiện để xử lý theo batch.
-3. **Chạy song song 2 nhánh trên batch vehicle**
-   - **Nhánh A - Brand Classification**: dự đoán hãng xe cho từng vehicle crop.
-   - **Nhánh B - Plate + OCR**:
-     - Detect biển số trong từng vehicle crop.
-     - Map bbox biển số về tọa độ ảnh gốc.
-     - Crop biển số và OCR batch để ra text + độ tin cậy.
-4. **Ghép kết quả & vẽ overlay**
-   - Vẽ bbox phương tiện, bbox biển số, label (brand + plate text + confidence).
-5. **Output**
-   - Image/Folder: ghi ảnh annotate.
-   - Video: ghi video annotate và overlay FPS.
+1. **Vehicle detection (YOLO)** trên ảnh gốc.
+2. **Crop vehicle ROI** từ bbox vehicle.
+3. **Chạy song song 2 nhánh**:
+   - **Brand branch**: batch classify hãng xe cho `car`.
+   - **Plate branch**:
+     - plate detect theo từng vehicle (multi-thread).
+     - map bbox plate về ảnh gốc.
+     - crop + preprocess plate (multi-thread).
+     - OCR (batch; nếu model OCR fix `batch=1` thì chạy multi-thread theo từng ảnh).
+4. **Merge kết quả** vehicle + plate + OCR text/conf.
+5. **Draw overlay** và xuất ảnh/video.
 
-Sơ đồ tổng quan:
+Sơ đồ:
 
 ```mermaid
 flowchart TD
     A[Input image/folder/video] --> B[Vehicle Detection YOLO]
     B --> C[Crop vehicle ROIs]
-
-    C --> D[Branch A: Brand Classification batch]
-    C --> E[Branch B: Plate Detection batch]
-    E --> F[Map plate bbox to original frame]
-    F --> G[Crop plate + OCR batch]
-
-    D --> H[Merge results]
-    G --> H
-
-    H --> I[Draw overlay: vehicle box, plate box, text, confidence]
-    I --> J[Save/Show output]
+    C --> D[Brand branch - batch]
+    C --> E[Plate branch - MT detect/map/preprocess + OCR]
+    D --> F[Merge]
+    E --> F
+    F --> G[Draw overlay + Save/Show]
 ```
 
 ONNX Runtime đã được vendor sẵn trong `third_party/onnxruntime`.
 
-## Quick start (dùng script có sẵn)
-
-Từ thư mục root dự án:
-
-```bash
-# 1) Cài dependencies hệ thống
-./setup.sh
-
-# 2) Build
-./build.sh
-
-# 3) Chạy main với 1 ảnh
-./run.sh --image img/1.jpeg
-```
-
-Nếu script chưa có quyền thực thi:
-
-```bash
-chmod +x setup.sh build.sh run.sh
-```
-
-## 1) Yêu cầu
+## 2) Yêu cầu
 
 - Linux (khuyến nghị Ubuntu 22.04)
-- `apt` để cài gói hệ thống
+- `apt`
 - CMake + compiler hỗ trợ C++23
 
-`setup.sh` sẽ cài các gói:
+`setup.sh` cài sẵn:
 
 - `build-essential`
 - `cmake`
 - `pkg-config`
 - `libopencv-dev`
 
-## 2) Setup môi trường (`setup.sh`)
+## 3) Quick start
+
+Từ root dự án:
 
 ```bash
 ./setup.sh
+./build.sh
+cd build
+../run.sh --image ../img/1.jpeg
 ```
 
-Option:
-
-- `--no-sudo`: chạy `apt` không qua `sudo`
-- `--skip-update`: bỏ qua bước `apt update`
-- `--help` / `-h`: xem trợ giúp
-
-Ví dụ:
+Nếu script chưa executable:
 
 ```bash
-./setup.sh --no-sudo --skip-update
+chmod +x setup.sh build.sh run.sh
 ```
 
-## 3) Build (`build.sh`)
+## 4) Build
 
-Lệnh mặc định build 2 target: `main` và `benchmark`.
+Mặc định build 2 target: `main` và `benchmark`.
 
 ```bash
 ./build.sh
 ```
 
-Option:
+Tùy chọn:
 
-- `--build-type <type>`: mặc định `Release`
-- `--jobs <n>`: số luồng build (mặc định `nproc`)
-- `--clean`: xoá `build/` và `out/build/` trước khi build
-- `--target <name>`: target build (có thể lặp nhiều lần)
+- `--build-type <type>` (mặc định `Release`)
+- `--jobs <n>`
+- `--clean`
+- `--target <name>` (lặp được)
 
 Ví dụ:
 
 ```bash
 ./build.sh --build-type Debug --jobs 8
-./build.sh --clean --target main
+./build.sh --clean --target benchmark
 ```
 
-Binary output:
+Output:
 
 - `out/build/bin/main`
 - `out/build/bin/benchmark`
 
-## 4) Chạy ứng dụng (`run.sh`)
+## 5) Chạy ứng dụng
 
 ### Main mode (mặc định)
-
-Chọn một trong các mode input:
 
 - `--image <path_anh>`
 - `--folder <path_thu_muc_anh>`
 - `--video <path_video>`
 
-Tùy chọn hiển thị:
+Tùy chọn:
 
-- `--show`
-- `--no-show` (mặc định)
-
-Tùy chọn lưu output:
-
-- Mặc định luôn lưu file output (`*_annotated.jpg` / `*_annotated.mp4`)
-- `--nosave`: không lưu file output (chỉ hợp lệ với `--image` hoặc `--video`, không áp dụng cho `--folder`)
-
-Ghi chú video:
-
-- Video được infer theo chu kỳ `app_config::kVideoInferEveryNFrames` (mặc định `5`): frame đầu chu kỳ chạy detect/OCR, các frame còn lại tái sử dụng overlay gần nhất.
+- `--show` / `--no-show`
+- `--nosave` (chỉ áp dụng cho `--image`, `--video`)
 
 Ví dụ:
 
 ```bash
-./run.sh --image img/1.jpeg
-./run.sh --image img/1.jpeg --nosave
-./run.sh --folder img
-./run.sh --video video2.mp4 --show
-./run.sh --video video2.mp4 --nosave
+../run.sh --image ../img/1.jpeg
+../run.sh --image ../img/1.jpeg --nosave
+../run.sh --folder ../img
+../run.sh --video ../video.mp4 --show --nosave
 ```
+
+Ghi chú video:
+
+- infer theo chu kỳ `app_config::kVideoInferEveryNFrames` (mặc định 5), các frame giữa chu kỳ tái sử dụng overlay gần nhất.
 
 ### Benchmark mode
 
-Chạy benchmark bằng cờ `--benchmark` (các đối số còn lại forward cho binary benchmark):
+Chạy từ thư mục `build`:
 
 ```bash
 ../run.sh --benchmark --image ../img/10.jpeg --warmup 3 --runs 10
 ```
 
-Nếu chưa build, `run.sh` sẽ báo thiếu executable và yêu cầu chạy `./build.sh` trước.
+Nếu chưa build, `run.sh` sẽ yêu cầu chạy `./build.sh` trước.
 
-## 5) Cấu hình model & ngưỡng
+## 6) Ý nghĩa benchmark metrics
+
+- `vehicle detect`: thời gian detect vehicle trên ảnh gốc.
+- `vehicle crop`: thời gian chuẩn bị crop vehicle.
+- `brand branch`: tổng thời gian nhánh brand.
+- `brand classify`: thời gian infer model brand thuần.
+- `plate branch`: tổng thời gian nhánh plate.
+- `plate detect`: thời gian detect plate trên vehicle crops.
+- `plate map`: map bbox plate về ảnh gốc.
+- `plate crop/pre`: crop + preprocess plate cho OCR.
+- `plate ocr`: thời gian OCR.
+- `merge`: ghép kết quả cuối.
+- `total pipeline`: end-to-end infer một lần.
+
+Vì brand/plate chạy song song:
+
+`total` gần với `vehicle + crop + max(brand_branch, plate_branch) + merge + overhead`.
+
+## 7) Cấu hình
 
 Thiết lập trong `include/app_config.h`:
 
-- `kVehicleModelPath = ../model/vehicle_int8.onnx`
-- `kPlateModelPath = ../model/plate_int8.onnx`
-- `kBrandCarModelPath = ../model/brand_car_classification.onnx`
-- `kOcrModelPath = ../model/model_ocr_plate.onnx`
+- `kVehicleModelPath`
+- `kPlateModelPath`
+- `kBrandCarModelPath`
+- `kOcrModelPath`
+- `kVehicleConfThresh`
+- `kPlateConfThresh`
+- `kNmsIouThresh`
+- `kOcrConfAvgThresh`
 
-Thông số chính hiện tại:
-
-- OCR input: `64x128`, RGB, uint8, NHWC
-- Brand input: `224x224`, float32 NCHW
-- `kVehicleConfThresh = 0.55`
-- `kPlateConfThresh = 0.7`
-- `kOcrConfAvgThresh = 0.75`
-- `kNmsIouThresh = 0.45`
-
-## 5) Docker
-
-Build image:
+## 8) Docker
 
 ```bash
-docker build -t trafic-monitoring .
+docker build -t traffic-monitoring .
+docker run --rm -v "$PWD/img:/app/img" traffic-monitoring --image /app/img/1.jpeg
+docker run --rm -v "$PWD/img:/app/img" --entrypoint /app/benchmark traffic-monitoring --image /app/img/1.jpeg --warmup 5 --runs 10
 ```
 
-Chạy `main`:
+## 9) Cấu trúc mã nguồn
 
-```bash
-docker run --rm -v "$PWD/img:/app/img" trafic-monitoring --image /app/img/1.jpeg
-```
-
-Chạy `benchmark`:
-
-```bash
-docker run --rm -v "$PWD/img:/app/img" --entrypoint /app/benchmark trafic-monitoring --image /app/img/1.jpeg --warmup 3 --runs 10
-```
-
-## 6) Cấu trúc mã nguồn chính
-
-- `src/main.cpp`: CLI + luồng xử lý image/folder/video
-- `src/frame_annotator.cpp`: annotate frame + overlay
-- `src/brand_classifier.cpp`: classify brand (single + batch)
-- `src/yolo_detector.cpp`: infer YOLO
-- `src/yolo_preprocess.cpp`: preprocess input YOLO
-- `src/yolo_nms.cpp`: NMS
-- `src/yolo_postprocess.cpp`: parse output YOLO
-- `src/ocr_batch.cpp`: OCR batch
-- `src/benchmark.cpp`: benchmark theo stage
+- `src/main.cpp`: CLI + luồng image/folder/video.
+- `src/frame_annotator.cpp`: infer overlay + draw.
+- `src/benchmark.cpp`: benchmark theo stage.
+- `src/yolo_detector.cpp`: infer YOLO (batch + single).
+- `src/ocr_batch.cpp`: OCR batch, fallback multi-thread khi model fix `batch=1`.
+- `src/brand_classifier.cpp`: classify brand.
+- `src/utils/plate_parallel.cpp`: tiện ích plate detect/map/preprocess song song.
+- `src/utils/parallel_utils.cpp`: tiện ích tính số worker dùng chung.
 
