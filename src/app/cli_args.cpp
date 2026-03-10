@@ -1,9 +1,9 @@
-#include "utils/cli_args.h"
+#include "ocrplate/app/cli_args.h"
 
 #include <iostream>
 #include <string>
 
-#include "app_config.h"
+#include "ocrplate/core/app_config.h"
 
 namespace cli_args {
 
@@ -15,7 +15,7 @@ void PrintUsage(const char* argv0, std::ostream& os) {
 		<< "  " << argv0 << " --video <duong_dan_video.mp4> [--show] [--nosave]\n\n"
 		<< "Ghi chu:\n"
 		<< "  - Pipeline: vehicle_detection (YOLO26 NMS-free) -> plate_detection (YOLO26 NMS-free, batch) -> OCR plate (batch)\n"
-		<< "  - Models (fix cung trong app_config.h):\n"
+		<< "  - Models (fix cung trong include/ocrplate/core/app_config.h):\n"
 		<< "      vehicle: " << app_config::kVehicleModelPath << "\n"
 		<< "      plate  : " << app_config::kPlateModelPath << "\n"
 		<< "      ocr    : " << app_config::kOcrModelPath << "\n"

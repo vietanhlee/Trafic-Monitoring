@@ -89,6 +89,19 @@ main() {
 
   require_command cmake
 
+  # Tự sửa lỗi hay gặp: cache CMake bị "lụt" từ môi trường khác
+  # (ví dụ toolchain Windows với đường dẫn *.exe) làm configure/build fail trên Linux.
+  if [[ "$(uname -s)" == "Linux" && -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+    local cached_cc cached_cxx
+    cached_cc="$(grep -E '^CMAKE_C_COMPILER:(FILEPATH|STRING)=' "$BUILD_DIR/CMakeCache.txt" | head -n1 | cut -d= -f2- || true)"
+    cached_cxx="$(grep -E '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=' "$BUILD_DIR/CMakeCache.txt" | head -n1 | cut -d= -f2- || true)"
+    if [[ "$cached_cc" == *.exe || "$cached_cxx" == *.exe ]]; then
+      info "Detected incompatible cached compiler in $BUILD_DIR/CMakeCache.txt ($cached_cc / $cached_cxx)."
+      info "Cleaning build artifacts to regenerate a fresh CMake cache..."
+      rm -rf "$BUILD_DIR" "$OUT_DIR"
+    fi
+  fi
+
   if ((clean)); then
     info "Cleaning build artifacts..."
     rm -rf "$BUILD_DIR" "$OUT_DIR"

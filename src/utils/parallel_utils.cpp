@@ -1,4 +1,4 @@
-#include "utils/parallel_utils.h"
+#include "ocrplate/utils/parallel_utils.h"
 
 #include <algorithm>
 #include <thread>

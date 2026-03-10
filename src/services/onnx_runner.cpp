@@ -1,10 +1,10 @@
-#include "onnx_runner.h"
+#include "ocrplate/services/onnx_runner.h"
 
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "utils/onnx_decode_utils.h"
+#include "ocrplate/utils/onnx_decode_utils.h"
 
 namespace onnx_runner {
 

@@ -1,4 +1,4 @@
-#include "yolo_detector_internal.h"
+#include "ocrplate/services/yolo_detector_internal.h"
 
 #include <algorithm>
 #include <cmath>

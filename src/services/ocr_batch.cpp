@@ -1,14 +1,14 @@
-#include "ocr_batch.h"
+#include "ocrplate/services/ocr_batch.h"
 
 #include <algorithm>
 #include <cstring>
 #include <future>
 #include <stdexcept>
 
-#include "post_process_out_string.h"
+#include "ocrplate/services/post_process_out_string.h"
 
-#include "utils/onnx_decode_utils.h"
-#include "utils/parallel_utils.h"
+#include "ocrplate/utils/onnx_decode_utils.h"
+#include "ocrplate/utils/parallel_utils.h"
 
 namespace ocr_batch {
 namespace {

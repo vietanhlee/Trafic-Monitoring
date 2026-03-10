@@ -1,4 +1,4 @@
-#include "frame_annotator.h"
+#include "ocrplate/pipeline/frame_annotator.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,11 +14,12 @@
 #include <opencv2/imgproc.hpp>
 
 #include "ocrplate/core/app_config.h"
-#include "brand_classifier.h"
-#include "ocr_batch.h"
-#include "utils/plate_parallel.h"
-#include "utils/vehicle_identity_store.h"
-#include "yolo_detector.h"
+#include "ocrplate/services/brand_classifier.h"
+#include "ocrplate/services/ocr_batch.h"
+#include "ocrplate/utils/plate_parallel.h"
+#include "ocrplate/tracking/vehicle_identity_store.h"
+#include "ocrplate/services/yolo_detector.h"
+#include "ocrplate/pipeline/track_trace.h"
 
 namespace {
 
@@ -71,6 +72,7 @@ cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
 	int rh = std::max(0, iy2 - iy1);
 	return cv::Rect(ix1, iy1, rw, rh);
 }
+
 
 void DrawPlate(cv::Mat& bgr, const yolo_detector::Detection& det, const std::string& text, float conf_avg) {
 	const bool is_low_ocr_conf = (conf_avg < app_config::kOcrConfAvgThresh);
@@ -189,7 +191,7 @@ PlatePipelineResult RunPlatePipeline(
 		vehicle_crops,
 		app_config::kPlateConfThresh);
 
-	auto map_future = std::async(std::launch::async, [&]() {
+	auto map_work = [&]() {
 		std::vector<yolo_detector::Detection> mapped;
 		std::vector<size_t> mapped_vehicle_indices;
 		mapped.reserve(candidates.size());
@@ -207,17 +209,29 @@ PlatePipelineResult RunPlatePipeline(
 			has_plate[c.vehicle_index] = true;
 		}
 		return std::make_tuple(std::move(mapped), std::move(mapped_vehicle_indices), std::move(has_plate));
-	});
+	};
 
-	auto crop_future = std::async(std::launch::async, [&]() {
+	auto crop_work = [&]() {
 		return plate_parallel::PreprocessPlatesParallel(candidates, vehicle_crops, app_config::kInputW, app_config::kInputH);
-	});
+	};
 
-	auto mapped_out = map_future.get();
-	result.plate_boxes_in_image = std::move(std::get<0>(mapped_out));
-	result.plate_vehicle_indices = std::move(std::get<1>(mapped_out));
-	result.vehicle_has_plate = std::move(std::get<2>(mapped_out));
-	std::vector<cv::Mat> plate_rgb_ocr = crop_future.get();
+	std::vector<cv::Mat> plate_rgb_ocr;
+	if (candidates.size() < 4) {
+		// Workload nho: chay tuan tu de tranh chi phi tao thread.
+		auto mapped_out = map_work();
+		result.plate_boxes_in_image = std::move(std::get<0>(mapped_out));
+		result.plate_vehicle_indices = std::move(std::get<1>(mapped_out));
+		result.vehicle_has_plate = std::move(std::get<2>(mapped_out));
+		plate_rgb_ocr = crop_work();
+	} else {
+		auto map_future = std::async(std::launch::async, map_work);
+		auto crop_future = std::async(std::launch::async, crop_work);
+		auto mapped_out = map_future.get();
+		result.plate_boxes_in_image = std::move(std::get<0>(mapped_out));
+		result.plate_vehicle_indices = std::move(std::get<1>(mapped_out));
+		result.vehicle_has_plate = std::move(std::get<2>(mapped_out));
+		plate_rgb_ocr = crop_future.get();
+	}
 
 	if (plate_rgb_ocr.empty()) {
 		result.has_any_plate = false;
@@ -242,7 +256,11 @@ TrackingRuntimeContext::TrackingRuntimeContext()
 		app_config::kTrackerHighScoreThreshold,
 		app_config::kTrackerLowScoreThreshold,
 		app_config::kTrackerIouThresholdLow),
-	  identity_store(app_config::kTrackBrandAcceptConf, app_config::kTrackPlateOcrAcceptConf) {}
+	  identity_store(
+		  app_config::kTrackBrandAcceptConf,
+		  app_config::kTrackPlateOcrAcceptConf,
+		  app_config::kPlateTextMinLen,
+		  app_config::kPlateTextMaxLen) {}
 
 void DrawFps(cv::Mat& bgr, double fps) {
 	char fps_buf[64];
@@ -283,6 +301,7 @@ bool InferFrameOverlay(
 	TrackingRuntimeContext* tracking_ctx) {
 	out_overlay.vehicles.clear();
 	out_overlay.plates.clear();
+	out_overlay.traces.clear();
 
 	auto vehicles_batch = yolo_detector::RunBatch(vehicle_sess, {bgr}, app_config::kVehicleConfThresh, app_config::kNmsIouThresh);
 	const auto& vehicles = vehicles_batch.at(0);
@@ -316,7 +335,8 @@ bool InferFrameOverlay(
 			continue;
 		}
 		vehicle_rects.push_back(r);
-		vehicle_crops.push_back(bgr(r).clone());
+		// Tối ưu: dùng ROI view thay vì clone (giảm copy bộ nhớ).
+		vehicle_crops.push_back(bgr(r));
 		yolo_detector::Detection v_expanded = v;
 		v_expanded.y2 = std::min(expand_y2, static_cast<float>(bgr.rows));
 		vehicles_used.push_back(v_expanded);
@@ -358,25 +378,31 @@ bool InferFrameOverlay(
 		}
 	}
 
-	auto brand_future = std::async(std::launch::async, [&]() {
-		if (need_brand_crops.empty()) {
-			return std::vector<brand_classifier::BrandResult>{};
-		}
-		return brand_classifier::ClassifyBatch(
+	std::vector<brand_classifier::BrandResult> car_brand_results;
+	PlatePipelineResult plate_result;
+	if (!need_brand_crops.empty() && !need_plate_crops.empty()) {
+		auto brand_future = std::async(std::launch::async, [&]() {
+			return brand_classifier::ClassifyBatch(
+				brand_sess,
+				need_brand_crops,
+				app_config::kBrandInputH,
+				app_config::kBrandInputW);
+		});
+		auto plate_future = std::async(std::launch::async, [&]() {
+			return RunPlatePipeline(plate_sess, ocr_sess, need_plate_crops, need_plate_rects);
+		});
+		car_brand_results = brand_future.get();
+		plate_result = plate_future.get();
+	} else if (!need_brand_crops.empty()) {
+		car_brand_results = brand_classifier::ClassifyBatch(
 			brand_sess,
 			need_brand_crops,
 			app_config::kBrandInputH,
 			app_config::kBrandInputW);
-	});
+	} else if (!need_plate_crops.empty()) {
+		plate_result = RunPlatePipeline(plate_sess, ocr_sess, need_plate_crops, need_plate_rects);
+	}
 
-	auto plate_future = std::async(std::launch::async, [&]() {
-		if (need_plate_crops.empty()) {
-			return PlatePipelineResult{};
-		}
-		return RunPlatePipeline(plate_sess, ocr_sess, need_plate_crops, need_plate_rects);
-	});
-
-	std::vector<brand_classifier::BrandResult> car_brand_results = brand_future.get();
 	std::vector<int> brand_id_per_vehicle(vehicles_used.size(), -1);
 	for (size_t k = 0; k < need_brand_indices.size() && k < car_brand_results.size(); ++k) {
 		const size_t vehicle_idx = need_brand_indices[k];
@@ -386,7 +412,6 @@ bool InferFrameOverlay(
 		}
 	}
 
-	PlatePipelineResult plate_result = plate_future.get();
 	std::vector<bool> vehicle_has_plate(vehicles_used.size(), false);
 	for (size_t sub_idx = 0; sub_idx < need_plate_indices.size(); ++sub_idx) {
 		const size_t global_idx = need_plate_indices[sub_idx];
@@ -436,13 +461,19 @@ bool InferFrameOverlay(
 		const auto* iden = (tracking_ctx != nullptr) ? tracking_ctx->identity_store.Get(track_ids[i]) : nullptr;
 		VehicleOverlayResult v;
 		v.det = vehicles_used[i];
-		v.track_id = track_ids[i];
+		// Luon hien ID tu dau neu dang bat tracking; thuoc tinh (bien so/hang) se cap nhat dan.
+		v.track_id = (tracking_ctx != nullptr) ? track_ids[i] : -1;
 		v.has_plate = vehicle_has_plate[i] || (iden != nullptr && iden->plate_accepted);
 		v.brand_id = (iden != nullptr && iden->brand_accepted) ? iden->brand_id : brand_id_per_vehicle[i];
 		if (iden != nullptr && iden->plate_accepted) {
 			v.accepted_plate_text = iden->plate_text;
 		}
 		out_overlay.vehicles.push_back(v);
+	}
+
+	// Cap nhat trace (lich su tam bbox) theo track_id va dua vao overlay de co the cache/draw lai.
+	if (tracking_ctx != nullptr) {
+		UpdateTrackTraces(bgr, out_overlay.vehicles, *tracking_ctx, out_overlay.traces);
 	}
 
 	for (size_t i = 0; i < plate_result.texts.size(); ++i) {
@@ -487,6 +518,7 @@ bool InferFrameOverlay(
 }
 
 void DrawFrameOverlay(cv::Mat& bgr, const FrameOverlayResult& overlay) {
+	DrawTrackTraces(bgr, overlay.traces);
 	for (const auto& v : overlay.vehicles) {
 		DrawVehicle(bgr, v.det, v.track_id, v.has_plate, v.brand_id, v.accepted_plate_text);
 	}

@@ -20,11 +20,151 @@
 #include <opencv2/imgproc.hpp>
 
 #include "ocrplate/core/app_config.h"
-#include "frame_annotator.h"
-#include "utils/cli_args.h"
+#include "ocrplate/pipeline/frame_annotator.h"
+#include "ocrplate/app/cli_args.h"
 
 namespace fs = std::filesystem;
 static const fs::path kOutputDir = "../out/build/img_out";
+
+struct WorkingArea {
+	cv::Rect bbox;
+	std::vector<cv::Point> polygon_abs;
+	std::vector<cv::Point> polygon_local;
+	cv::Mat mask_local;
+	bool enabled = false;
+};
+
+struct PolygonPickerState {
+	std::vector<cv::Point> points;
+	cv::Point hover{-1, -1};
+};
+
+void OnPolygonPickMouse(int event, int x, int y, int /*flags*/, void* userdata) {
+	auto* st = static_cast<PolygonPickerState*>(userdata);
+	if (st == nullptr) {
+		return;
+	}
+	st->hover = cv::Point(x, y);
+	if (event == cv::EVENT_LBUTTONDOWN) {
+		st->points.emplace_back(x, y);
+	} else if (event == cv::EVENT_RBUTTONDOWN) {
+		if (!st->points.empty()) {
+			st->points.pop_back();
+		}
+	}
+}
+
+WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::vector<cv::Point>& polygon_abs) {
+	WorkingArea area;
+	if (polygon_abs.size() < 3) {
+		area.bbox = cv::Rect(0, 0, frame_size.width, frame_size.height);
+		area.polygon_abs = {
+			cv::Point(0, 0),
+			cv::Point(frame_size.width - 1, 0),
+			cv::Point(frame_size.width - 1, frame_size.height - 1),
+			cv::Point(0, frame_size.height - 1)};
+		area.polygon_local = area.polygon_abs;
+		area.mask_local = cv::Mat(frame_size, CV_8UC1, cv::Scalar(255));
+		area.enabled = false;
+		return area;
+	}
+
+	cv::Rect raw = cv::boundingRect(polygon_abs);
+	const int x = std::max(0, std::min(raw.x, frame_size.width - 1));
+	const int y = std::max(0, std::min(raw.y, frame_size.height - 1));
+	const int w = std::max(1, std::min(raw.width, frame_size.width - x));
+	const int h = std::max(1, std::min(raw.height, frame_size.height - y));
+	area.bbox = cv::Rect(x, y, w, h);
+	area.polygon_abs = polygon_abs;
+	area.polygon_local.reserve(polygon_abs.size());
+	for (const auto& p : polygon_abs) {
+		area.polygon_local.emplace_back(p.x - area.bbox.x, p.y - area.bbox.y);
+	}
+	area.mask_local = cv::Mat(area.bbox.height, area.bbox.width, CV_8UC1, cv::Scalar(0));
+	std::vector<std::vector<cv::Point>> polys{area.polygon_local};
+	cv::fillPoly(area.mask_local, polys, cv::Scalar(255), cv::LINE_AA);
+	area.enabled = true;
+	return area;
+}
+
+WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
+	const std::string win = "Chon vung da giac tracking";
+	PolygonPickerState state;
+	cv::namedWindow(win, cv::WINDOW_NORMAL);
+	cv::resizeWindow(win, 1280, 800);
+	cv::setMouseCallback(win, OnPolygonPickMouse, &state);
+
+	while (true) {
+		cv::Mat canvas = first_frame.clone();
+
+		if (!state.points.empty()) {
+			cv::Mat overlay = canvas.clone();
+			std::vector<std::vector<cv::Point>> poly_fill{state.points};
+			if (state.points.size() >= 3) {
+				cv::fillPoly(overlay, poly_fill, cv::Scalar(40, 180, 70), cv::LINE_AA);
+				cv::addWeighted(overlay, 0.22, canvas, 0.78, 0.0, canvas);
+			}
+			for (size_t i = 1; i < state.points.size(); ++i) {
+				cv::line(canvas, state.points[i - 1], state.points[i], cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
+			}
+			if (state.hover.x >= 0 && state.hover.y >= 0) {
+				cv::line(canvas, state.points.back(), state.hover, cv::Scalar(120, 220, 255), 1, cv::LINE_AA);
+			}
+			for (const auto& p : state.points) {
+				cv::circle(canvas, p, 4, cv::Scalar(0, 0, 0), cv::FILLED, cv::LINE_AA);
+				cv::circle(canvas, p, 3, cv::Scalar(255, 255, 255), cv::FILLED, cv::LINE_AA);
+			}
+		}
+
+		const std::string tip1 = "Click trai: them diem | Click phai/u: xoa diem cuoi | c: xoa het";
+		const std::string tip2 = "Enter/Space: xac nhan da giac | Esc: bo qua (toan frame)";
+		cv::rectangle(canvas, cv::Rect(12, 12, std::max(780, first_frame.cols / 2), 56), cv::Scalar(0, 0, 0), cv::FILLED);
+		cv::putText(canvas, tip1, cv::Point(20, 34), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(240, 240, 240), 1, cv::LINE_AA);
+		cv::putText(canvas, tip2, cv::Point(20, 58), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(160, 255, 190), 1, cv::LINE_AA);
+
+		cv::imshow(win, canvas);
+		const int key = cv::waitKey(16);
+		if (key == 27) {
+			cv::destroyWindow(win);
+			return BuildWorkingAreaFromPolygon(first_frame.size(), {});
+		}
+		if (key == 'c' || key == 'C') {
+			state.points.clear();
+			continue;
+		}
+		if (key == 'u' || key == 'U') {
+			if (!state.points.empty()) {
+				state.points.pop_back();
+			}
+			continue;
+		}
+		if (key == 13 || key == 10 || key == 32) {
+			if (state.points.size() >= 3) {
+				cv::destroyWindow(win);
+				return BuildWorkingAreaFromPolygon(first_frame.size(), state.points);
+			}
+		}
+	}
+}
+
+void DrawWorkingAreaOverlay(cv::Mat& frame, const WorkingArea& area) {
+	if (!area.enabled || area.polygon_abs.size() < 3) {
+		return;
+	}
+	cv::Mat overlay = frame.clone();
+	std::vector<std::vector<cv::Point>> poly{area.polygon_abs};
+	cv::fillPoly(overlay, poly, cv::Scalar(50, 190, 80), cv::LINE_AA);
+	cv::addWeighted(overlay, 0.10, frame, 0.90, 0.0, frame);
+
+	// Vien ngoai dam + vien trong sang de de nhin tren nen phuc tap.
+	cv::polylines(frame, poly, true, cv::Scalar(0, 0, 0), 3, cv::LINE_AA);
+	cv::polylines(frame, poly, true, cv::Scalar(120, 255, 170), 2, cv::LINE_AA);
+
+	const std::string lbl = "WORK AREA";
+	const cv::Point anchor(area.bbox.x + 8, std::max(24, area.bbox.y + 22));
+	cv::rectangle(frame, cv::Rect(anchor.x - 6, anchor.y - 18, 120, 24), cv::Scalar(0, 0, 0), cv::FILLED);
+	cv::putText(frame, lbl, anchor, cv::FONT_HERSHEY_SIMPLEX, 0.58, cv::Scalar(160, 255, 190), 1, cv::LINE_AA);
+}
 
 int ProcessOneImage(
 	const fs::path& image_path,
@@ -127,6 +267,20 @@ int ProcessOneVideo(
 		return dst;
 	};
 
+	cv::Mat frame;
+	if (!cap.read(frame) || frame.empty()) {
+		throw std::runtime_error("Video khong co frame hop le: " + video_path.string());
+	}
+
+	// Chon vung da giac lam viec ngay tu dau, sau do chi infer/draw trong vung nay.
+	const WorkingArea work_area = SelectWorkingPolygon(frame);
+	std::cout << "Vung xu ly: x=" << work_area.bbox.x
+		<< " y=" << work_area.bbox.y
+		<< " w=" << work_area.bbox.width
+		<< " h=" << work_area.bbox.height
+		<< (work_area.enabled ? " (polygon)" : " (toan frame)")
+		<< "\n";
+
 	if (show_output) {
 		display_thread = std::thread([&]() {
 			cv::namedWindow(window_name, cv::WINDOW_NORMAL);
@@ -161,11 +315,6 @@ int ProcessOneVideo(
 
 			cv::destroyWindow(window_name);
 		});
-	}
-
-	cv::Mat frame;
-	if (!cap.read(frame) || frame.empty()) {
-		throw std::runtime_error("Video khong co frame hop le: " + video_path.string());
 	}
 
 	double input_fps = cap.get(cv::CAP_PROP_FPS);
@@ -263,8 +412,18 @@ int ProcessOneVideo(
 
 			auto infer_t0 = std::chrono::steady_clock::now();
 			try {
+				cv::Mat work_view = frame(work_area.bbox);
+				cv::Mat infer_input;
+				if (work_area.enabled) {
+					work_view.copyTo(infer_input);
+					cv::Mat masked;
+					cv::bitwise_and(infer_input, infer_input, masked, work_area.mask_local);
+					infer_input = std::move(masked);
+				} else {
+					infer_input = work_view;
+				}
 				has_cached_overlay = InferFrameOverlay(
-					frame,
+					infer_input,
 					vehicle_sess,
 					plate_sess,
 					ocr_sess,
@@ -281,8 +440,10 @@ int ProcessOneVideo(
 		}
 
 		if (has_cached_overlay) {
-			DrawFrameOverlay(frame, cached_overlay);
+			cv::Mat draw_view = frame(work_area.bbox);
+			DrawFrameOverlay(draw_view, cached_overlay);
 		}
+		DrawWorkingAreaOverlay(frame, work_area);
 
 		DrawFps(frame, display_fps);
 		if (save_output) {

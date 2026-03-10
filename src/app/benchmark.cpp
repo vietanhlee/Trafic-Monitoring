@@ -13,12 +13,12 @@
 
 #include <opencv2/imgcodecs.hpp>
 
-#include "app_config.h"
-#include "brand_classifier.h"
-#include "frame_annotator.h"
-#include "ocr_batch.h"
-#include "utils/plate_parallel.h"
-#include "yolo_detector.h"
+#include "ocrplate/core/app_config.h"
+#include "ocrplate/services/brand_classifier.h"
+#include "ocrplate/pipeline/frame_annotator.h"
+#include "ocrplate/services/ocr_batch.h"
+#include "ocrplate/utils/plate_parallel.h"
+#include "ocrplate/services/yolo_detector.h"
 
 namespace fs = std::filesystem;
 
@@ -224,7 +224,10 @@ StageMetrics RunPipelineOnce(
 		const auto t_plate_1 = std::chrono::steady_clock::now();
 		pr.plate_detect_ms = ElapsedMs(t_plate_0, t_plate_1);
 
-		std::vector<plate_parallel::PlateCandidate> candidates = plate_parallel::BuildPlateCandidatesParallel(plates_per_vehicle, vehicle_crops);
+		std::vector<plate_parallel::PlateCandidate> candidates = plate_parallel::BuildPlateCandidatesParallel(
+			plates_per_vehicle,
+			vehicle_crops,
+			app_config::kPlateConfThresh);
 
 		auto map_future = std::async(std::launch::async, [&]() {
 			const auto t_map_0 = std::chrono::steady_clock::now();

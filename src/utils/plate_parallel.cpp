@@ -1,4 +1,4 @@
-#include "utils/plate_parallel.h"
+#include "ocrplate/utils/plate_parallel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,8 +6,8 @@
 #include <thread>
 #include <utility>
 
-#include "image_preprocess.h"
-#include "utils/parallel_utils.h"
+#include "ocrplate/utils/image_preprocess.h"
+#include "ocrplate/utils/parallel_utils.h"
 
 namespace {
 
@@ -64,7 +64,8 @@ std::vector<std::vector<yolo_detector::Detection>> DetectPlatesPerVehicleParalle
 
 std::vector<PlateCandidate> BuildPlateCandidatesParallel(
 	const std::vector<std::vector<yolo_detector::Detection>>& plates_per_vehicle,
-	const std::vector<cv::Mat>& vehicle_crops) {
+	const std::vector<cv::Mat>& vehicle_crops,
+	float min_plate_score) {
 	std::vector<std::vector<PlateCandidate>> candidates_per_vehicle(plates_per_vehicle.size());
 	const size_t worker_count = parallel_utils::ResolveWorkerCount(plates_per_vehicle.size());
 	const size_t chunk = (plates_per_vehicle.size() + worker_count - 1) / worker_count;
@@ -83,6 +84,9 @@ std::vector<PlateCandidate> BuildPlateCandidatesParallel(
 				auto& out = candidates_per_vehicle[i];
 				out.reserve(dets.size());
 				for (const auto& p : dets) {
+					if (p.score < min_plate_score) {
+						continue;
+					}
 					cv::Rect pr_local = ToRectClamped(
 						p.x1,
 						p.y1,

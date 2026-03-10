@@ -16,3 +16,8 @@ temp.*
 *.mp4
 .vscode/
 test.py
+out.txt
+main.py
+craw.py
+output_frames
+split_frame.py
