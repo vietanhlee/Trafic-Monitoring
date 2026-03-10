@@ -6,16 +6,9 @@
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/core.hpp>
 
-namespace yolo_detector {
+#include "ocrplate/core/detection.h"
 
-struct Detection {
-	float x1 = 0.0f;
-	float y1 = 0.0f;
-	float x2 = 0.0f;
-	float y2 = 0.0f;
-	float score = 0.0f;
-	int cls = -1;
-};
+namespace yolo_detector {
 
 struct LetterboxInfo {
 	int orig_w = 0;

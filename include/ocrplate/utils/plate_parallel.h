@@ -6,7 +6,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/core.hpp>
 
-#include "yolo_detector.h"
+#include "ocrplate/services/yolo_detector.h"
 
 namespace plate_parallel {
 
@@ -24,7 +24,8 @@ std::vector<std::vector<yolo_detector::Detection>> DetectPlatesPerVehicleParalle
 
 std::vector<PlateCandidate> BuildPlateCandidatesParallel(
 	const std::vector<std::vector<yolo_detector::Detection>>& plates_per_vehicle,
-	const std::vector<cv::Mat>& vehicle_crops);
+	const std::vector<cv::Mat>& vehicle_crops,
+	float min_plate_score);
 
 std::vector<cv::Mat> PreprocessPlatesParallel(
 	const std::vector<PlateCandidate>& candidates,

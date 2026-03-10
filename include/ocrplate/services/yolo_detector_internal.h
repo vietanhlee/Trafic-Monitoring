@@ -1,7 +1,7 @@
 #pragma once
 // Internal helpers cho yolo_detector – KHÔNG dùng ngoài module này.
 
-#include "yolo_detector.h"
+#include "ocrplate/services/yolo_detector.h"
 
 #include <vector>
 
