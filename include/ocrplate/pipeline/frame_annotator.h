@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Giao dien cho bo xu ly ve khung hinh va hop nhat ket qua OCR/brand/tracking.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <onnxruntime_cxx_api.h>
@@ -44,9 +48,14 @@ struct FrameOverlayResult {
 struct TrackingRuntimeContext {
 	vehicle_tracker::ByteTrackTracker tracker;
 	vehicle_identity_store::VehicleIdentityStore identity_store;
+	bool enable_predict_on_line_cross = false;
+	cv::Point gate_line_p1{0, 0};
+	cv::Point gate_line_p2{0, 0};
 
 	// Luu vet di chuyen theo track_id (tam bbox) de ve trace.
 	std::unordered_map<int, std::deque<cv::Point>> track_trace_points;
+	std::unordered_map<int, int> track_prev_line_side;
+	std::unordered_map<int, bool> track_crossed_gate;
 
 	TrackingRuntimeContext();
 };

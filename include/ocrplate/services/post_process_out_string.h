@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Ham hau xu ly chuoi OCR de chuan hoa bien so dau ra.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <cstdint>

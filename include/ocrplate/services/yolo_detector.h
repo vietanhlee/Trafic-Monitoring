@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Giao dien detect YOLO cho anh don va batch anh.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <cstdint>
@@ -29,14 +33,17 @@ struct InputSpec {
 	int64_t w = 640;
 };
 
-// Chạy YOLO để detect.
-// Hỗ trợ standard YOLO output: (N, 4+num_classes, num_anchors) → transpose + NMS
+// Chay YOLO detector cho batch BGR images.
+// - Tu dong doc input spec (NCHW/NHWC, float/uint8)
+// - Tu dong letterbox + map nguoc ve toa do anh goc
+// - Ho tro output YOLO rank-3 pho bien va ap NMS theo tung anh
 std::vector<std::vector<Detection>> RunBatch(
 	Ort::Session& session,
 	const std::vector<cv::Mat>& bgr_images,
 	float conf_threshold,
 	float nms_iou_threshold = 0.35f);
 
+// Helper cho 1 anh (tai su dung cung pipeline voi RunBatch).
 std::vector<Detection> RunSingle(
 	Ort::Session& session,
 	const cv::Mat& bgr_image,

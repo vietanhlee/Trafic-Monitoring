@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Dinh nghia kieu du lieu detection dung chung cho pipeline YOLO.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 namespace yolo_detector {

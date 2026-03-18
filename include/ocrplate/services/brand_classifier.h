@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Giao dien classify hang xe tren crop phuong tien.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <string>

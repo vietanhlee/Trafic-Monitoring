@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Khai bao tien ich theo vet (trace) de hien thi lich su chuyen dong cua doi tuong.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <opencv2/core.hpp>

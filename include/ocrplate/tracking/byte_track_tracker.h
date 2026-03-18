@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Giao dien bo theo vet ByteTrack cho phuong tien qua nhieu frame.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <cstdint>

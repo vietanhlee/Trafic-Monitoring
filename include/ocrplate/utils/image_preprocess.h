@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Tien ich doc/chuyen doi anh dau vao phuc vu infer.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <filesystem>

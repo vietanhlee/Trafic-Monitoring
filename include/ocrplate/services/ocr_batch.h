@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Giao dien OCR theo lo (batch) cho cac anh bien so da preprocess.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <string>

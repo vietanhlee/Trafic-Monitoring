@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Khai bao helper noi bo cho preprocess, parse output va NMS cua YOLO.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 // Internal helpers cho yolo_detector – KHÔNG dùng ngoài module này.
 

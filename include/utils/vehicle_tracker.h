@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Header tuong thich cu cho vehicle tracker o nhanh utils.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <cstdint>

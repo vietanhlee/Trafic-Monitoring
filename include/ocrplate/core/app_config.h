@@ -1,5 +1,10 @@
+/*
+ * Mo ta file: Khai bao cac hang so cau hinh trung tam cho model, nguong va duong dan mac dinh.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace app_config {
@@ -23,12 +28,20 @@ inline constexpr int kBrandInputH = 224;
 inline constexpr int kBrandInputW = 224;
 
 // Ngưỡng confidence
-inline constexpr float kVehicleConfThresh = 0.5f;
-inline constexpr float kPlateConfThresh = 0.7f;
-inline constexpr float kOcrConfAvgThresh = 0.7f;
+inline constexpr float kVehicleConfThresh = 0.6f;
+inline constexpr float kPlateConfThresh = 0.6f;
+inline constexpr float kOcrConfAvgThresh = 0.8f;
 
 // Ngưỡng IoU cho NMS (dùng cho output YOLO dạng chuẩn)
-inline constexpr float kNmsIouThresh = 0.15f;
+inline constexpr float kNmsIouThresh = 0.45f;
+
+// Plate branch: moi phuong tien chi co 1 bien so,
+// nen tat NMS va chon top-1 detection theo score.
+inline constexpr float kPlateNmsIouThresh = 0.0f;
+
+// Plate detect da co chia theo xe bang da luong o tang ngoai,
+// nen gioi han worker de tranh oversubscription thread.
+inline constexpr std::size_t kPlateDetectMaxWorkers = 6;
 
 // Ký tự cuối '_' là blank cho CTC.
 inline const std::string kAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_";
@@ -38,25 +51,34 @@ inline constexpr const char* kDefaultImagePath = "../img/1.jpeg";
 
 // Video: cứ mỗi N frame mới chạy inference 1 lần, các frame còn lại tái dùng overlay gần nhất.
 // Profile can bang "on dinh + FPS": 5.
-inline constexpr int kVideoInferEveryNFrames = 5;
+inline constexpr int kVideoInferEveryNFrames = 3;
 
 // Tracking-by-detection (vehicle id)
-inline constexpr float kTrackerIouThreshold = 0.15f;
-inline constexpr int kTrackerMaxMissedFrames = 45;
+inline constexpr float kTrackerIouThreshold = 0.35f;
+inline constexpr int kTrackerMaxMissedFrames = 20;
 inline constexpr int kTrackerMinConfirmedHits = 1;
 
 // Tham số ghép nối theo kiểu ByteTrack.
 // - Bước 1: ghép track với detection có score >= kTrackerHighScoreThreshold.
 // - Bước 2: ghép các track còn lại với detection có score >= kTrackerLowScoreThreshold,
 //          dùng ngưỡng IoU lỏng hơn.
-inline constexpr float kTrackerHighScoreThreshold = 0.55f;
+inline constexpr float kTrackerHighScoreThreshold = 0.65f;
 inline constexpr float kTrackerLowScoreThreshold = 0.45f;
 inline constexpr float kTrackerIouThresholdLow = 0.12f;
 
 // Chấp nhận kết quả nhận diện cho từng track khi conf vượt ngưỡng.
-inline constexpr float kTrackBrandAcceptConf = 0.7f;
-inline constexpr float kTrackPlateOcrAcceptConf = 0.7f;
-inline constexpr int kPlateTextMinLen = 7;
+inline constexpr float kTrackBrandAcceptConf = 0.6f;
+inline constexpr float kTrackPlateOcrAcceptConf = 0.8f;
+// Neu predict brand that bai lien tiep den nguong nay thi khoa brand (khong predict nua).
+inline constexpr int kTrackBrandMaxAttempts = 5;
+// Neu OCR plate that bai lien tiep den nguong nay thi khoa plate = unknown.
+inline constexpr int kTrackPlateMaxOcrAttempts = 5;
+inline constexpr const char* kTrackPlateUnknownText = "unknown";
+// Neu detect plate that bai lien tiep den nguong nay thi khoa plate = no_plate,
+// cac frame sau bo qua detect+ocr plate cho track do.
+inline constexpr int kTrackPlateMaxDetectAttempts = 9;
+inline constexpr const char* kTrackPlateNoPlateText = "no_plate";
+inline constexpr int kPlateTextMinLen = 6;
 inline constexpr int kPlateTextMaxLen = 9;
 
 // Ve duong trace cho tung track_id (lich su tam bbox).

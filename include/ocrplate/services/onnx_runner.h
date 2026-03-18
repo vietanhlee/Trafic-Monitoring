@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Tien ich khoi tao ONNX Runtime session va chay infer co cau hinh.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #pragma once
 
 #include <cstdint>
