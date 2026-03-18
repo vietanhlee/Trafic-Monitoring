@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Mo ta file: Script build CMake: tao/refresh thu muc build va bien dich target chinh.
+# Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

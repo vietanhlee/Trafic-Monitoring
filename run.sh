@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Mo ta file: Script chay binary OCR plate voi tham so tien ich mac dinh.
+# Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

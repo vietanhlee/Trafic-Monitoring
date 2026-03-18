@@ -46,8 +46,11 @@ Ngoài `track_id`, hệ thống duy trì map nghiệp vụ: `track_id -> {brand,
 
 - brand: `brand_conf > kTrackBrandAcceptConf`
 - plate: `plate_det_conf > kTrackPlateDetAcceptConf` và `ocr_conf_avg > kTrackPlateOcrAcceptConf`
+- brand/plate đều có budget số lần thử; quá ngưỡng thì dừng predict nhánh tương ứng (`kTrackBrandMaxAttempts`, `kTrackPlateMaxOcrAttempts`)
 
 Nếu một track đã đủ brand/plate hợp lệ, các frame sau sẽ bỏ qua phần nhận diện tương ứng để giảm compute.
+
+Ở mode video, sau khi chọn vùng làm việc, hệ thống cho phép chọn thêm một đường ranh (2 điểm). Chỉ các track đã đi qua đường này mới bắt đầu chạy predict brand và OCR plate.
 
 ## 3) Yêu cầu
 
@@ -119,7 +122,7 @@ Main:
 Benchmark:
 
 ```bash
-../run.sh --benchmark --image ../img/10.jpeg --warmup 3 --runs 10
+../run.sh --benchmark --image ../img/1.png --warmup 5 --runs 20
 ```
 
 Video note:
@@ -133,6 +136,7 @@ Thiết lập trong `include/ocrplate/core/app_config.h`:
 - Model paths: `kVehicleModelPath`, `kPlateModelPath`, `kBrandCarModelPath`, `kOcrModelPath`
 - Thresholds: `kVehicleConfThresh`, `kPlateConfThresh`, `kNmsIouThresh`, `kOcrConfAvgThresh`
 - Video/tracking: `kVideoInferEveryNFrames`, các biến `kTracker*`, các biến `kTrack*AcceptConf`
+- Budget retry: `kTrackBrandMaxAttempts`, `kTrackPlateMaxOcrAttempts`
 
 ## 8) Docker
 
