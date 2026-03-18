@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Phien ban frame annotator cu/tuong thich, giu cho nhung diem goi legacy.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "frame_annotator.h"
 
 #include <algorithm>
@@ -183,7 +187,7 @@ PlatePipelineResult RunPlatePipeline(
 		plate_sess,
 		vehicle_crops,
 		app_config::kPlateConfThresh,
-		app_config::kNmsIouThresh);
+		app_config::kPlateNmsIouThresh);
 	std::vector<plate_parallel::PlateCandidate> candidates = plate_parallel::BuildPlateCandidatesParallel(
 		plates_per_vehicle,
 		vehicle_crops,
@@ -242,7 +246,13 @@ TrackingRuntimeContext::TrackingRuntimeContext()
 		app_config::kTrackerHighScoreThreshold,
 		app_config::kTrackerLowScoreThreshold,
 		app_config::kTrackerIouThresholdLow),
-	  identity_store(app_config::kTrackBrandAcceptConf, app_config::kTrackPlateOcrAcceptConf) {}
+	  identity_store(
+		  app_config::kTrackBrandAcceptConf,
+		  app_config::kTrackPlateOcrAcceptConf,
+		  app_config::kTrackPlateMaxOcrAttempts,
+		  app_config::kTrackPlateUnknownText,
+		  app_config::kPlateTextMinLen,
+		  app_config::kPlateTextMaxLen) {}
 
 void DrawFps(cv::Mat& bgr, double fps) {
 	char fps_buf[64];
@@ -309,17 +319,13 @@ bool InferFrameOverlay(
 	vehicle_rects.reserve(vehicles.size());
 	vehicles_used.reserve(vehicles.size());
 	for (const auto& v : vehicles) {
-		const float box_h = v.y2 - v.y1;
-		const float expand_y2 = v.y2 + box_h * 0.05f;
-		cv::Rect r = ToRectClamped(v.x1, v.y1, v.x2, expand_y2, bgr.cols, bgr.rows);
+		cv::Rect r = ToRectClamped(v.x1, v.y1, v.x2, v.y2, bgr.cols, bgr.rows);
 		if (r.width <= 2 || r.height <= 2) {
 			continue;
 		}
 		vehicle_rects.push_back(r);
 		vehicle_crops.push_back(bgr(r).clone());
-		yolo_detector::Detection v_expanded = v;
-		v_expanded.y2 = std::min(expand_y2, static_cast<float>(bgr.rows));
-		vehicles_used.push_back(v_expanded);
+		vehicles_used.push_back(v);
 	}
 	if (vehicle_crops.empty()) {
 		if (verbose) {
@@ -478,6 +484,8 @@ bool InferFrameOverlay(
 				<< "map id=" << one.track_id
 				<< " brand=" << (one.brand_accepted ? BrandClassName(one.brand_id) : "?")
 				<< " plate=" << (one.plate_accepted ? one.plate_text : "?")
+				<< " plate_ocr_attempts=" << one.plate_ocr_attempts
+				<< " plate_forced_unknown=" << (one.plate_forced_unknown ? "yes" : "no")
 				<< " done=" << (one.IsComplete() ? "yes" : "no")
 				<< "\n";
 		}

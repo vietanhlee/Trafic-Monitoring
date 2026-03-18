@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai xuat bao cao OCR theo frame/track de debug va thong ke.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/utils/ocr_report.h"
 
 #include <algorithm>

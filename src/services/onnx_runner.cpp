@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai khoi tao session ONNX va quan ly option runtime.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/services/onnx_runner.h"
 
 #include <stdexcept>
@@ -34,6 +38,7 @@ ArgMaxWithConfResult RunModelGetArgMaxAndConf(
     Ort::Session session(env, model_path.c_str(), sess_options);
 
     Ort::AllocatorWithDefaultOptions allocator;
+    // Lay ten input/output tu graph de run bang API ten-node.
     auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
     const char* input_name = input_name_alloc.get();
 
@@ -65,6 +70,7 @@ ArgMaxWithConfResult RunModelGetArgMaxAndConf(
     }
 
     const std::vector<const char*> input_names = {input_name};
+    // Infer 1 lan, lay tat ca output nhung uu tien output[0] cho decode CTC.
     auto outputs = session.Run(
         Ort::RunOptions{nullptr},
         input_names.data(),

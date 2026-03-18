@@ -1,9 +1,19 @@
+/*
+ * Mo ta file: Trien khai OCR batch, gom tien xu ly va giai ma ket qua ky tu.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/services/ocr_batch.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <cstring>
-#include <future>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
+#include <unordered_map>
+#include <utility>
 
 #include "ocrplate/services/post_process_out_string.h"
 
@@ -12,6 +22,67 @@
 
 namespace ocr_batch {
 namespace {
+
+// Metadata cache theo session de tranh truy van input/output schema lap lai
+// moi lan goi RunBatch (duoc goi rat nhieu trong video/inference loop).
+struct OcrSessionMeta {
+	ONNXTensorElementDataType input_elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+	int64_t fixed_batch = -1;
+	std::string input_name;
+	std::vector<std::string> output_name_storage;
+	std::vector<const char*> output_names;
+};
+
+std::shared_ptr<const OcrSessionMeta> GetSessionMeta(Ort::Session& session) {
+	static std::mutex cache_mu;
+	static std::unordered_map<std::uintptr_t, std::shared_ptr<const OcrSessionMeta>> cache;
+
+	const auto key = reinterpret_cast<std::uintptr_t>(&session);
+	{
+		std::lock_guard<std::mutex> lk(cache_mu);
+		auto it = cache.find(key);
+		if (it != cache.end()) {
+			return it->second;
+		}
+	}
+
+	auto meta = std::make_shared<OcrSessionMeta>();
+	// Doc shape/type input mot lan de quyet dinh che do chay fixed-batch hay dynamic.
+	auto input_type_info = session.GetInputTypeInfo(0);
+	auto input_tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
+	const auto input_shape = input_tensor_info.GetShape();
+	meta->input_elem_type = input_tensor_info.GetElementType();
+	if (input_shape.size() == 4 && input_shape[0] > 0) {
+		meta->fixed_batch = input_shape[0];
+	}
+
+	Ort::AllocatorWithDefaultOptions allocator;
+	auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
+	meta->input_name = input_name_alloc.get();
+
+	const size_t output_count = session.GetOutputCount();
+	if (output_count == 0) {
+		throw std::runtime_error("OCR model khong co output");
+	}
+	meta->output_name_storage.reserve(output_count);
+	meta->output_names.reserve(output_count);
+	for (size_t i = 0; i < output_count; ++i) {
+		auto out_name = session.GetOutputNameAllocated(i, allocator);
+		meta->output_name_storage.emplace_back(out_name.get());
+	}
+	for (const auto& s : meta->output_name_storage) {
+		meta->output_names.push_back(s.c_str());
+	}
+
+	{
+		std::lock_guard<std::mutex> lk(cache_mu);
+		auto [it, inserted] = cache.emplace(key, meta);
+		if (!inserted) {
+			return it->second;
+		}
+	}
+	return meta;
+}
 
 void EnsureRgbU8(const cv::Mat& m, int h, int w) {
 	if (m.empty()) {
@@ -24,6 +95,7 @@ void EnsureRgbU8(const cv::Mat& m, int h, int w) {
 		throw std::runtime_error("OCR input sai kich thuoc (can " + std::to_string(w) + "x" + std::to_string(h) + ")");
 	}
 	if (!m.isContinuous()) {
+		// Tensor tao bang memcpy yeu cau du lieu lien tuc trong bo nho.
 		throw std::runtime_error("OCR input phai continuous");
 	}
 }
@@ -48,6 +120,7 @@ std::vector<onnx_runner::ArgMaxWithConfResult> DecodeBatchOutput(Ort::Value& out
 	std::vector<onnx_runner::ArgMaxWithConfResult> out;
 	out.reserve(static_cast<size_t>(batch));
 	if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+		// Model xuat float32: decode tung sample theo [T, C].
 		const float* data = out0.GetTensorData<float>();
 		for (int64_t n = 0; n < batch; ++n) {
 			const float* base = data + n * time_dim * class_dim;
@@ -56,6 +129,7 @@ std::vector<onnx_runner::ArgMaxWithConfResult> DecodeBatchOutput(Ort::Value& out
 		return out;
 	}
 	if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
+		// Ho tro them output double de tuong thich model export khac nhau.
 		const double* data = out0.GetTensorData<double>();
 		for (int64_t n = 0; n < batch; ++n) {
 			const double* base = data + n * time_dim * class_dim;
@@ -73,6 +147,7 @@ float ComputeAvgConfNonBlank(const std::vector<int64_t>& indices, const std::vec
 	const size_t T = std::min(indices.size(), conf.size());
 	int last_nonblank = -1;
 	for (size_t t = 0; t < T; ++t) {
+		// Tim vi tri ky tu non-blank cuoi de bo qua phan duoi chuoi (padding/time-step du).
 		if (indices[t] != blank_index) {
 			last_nonblank = static_cast<int>(t);
 		}
@@ -98,25 +173,32 @@ std::vector<OcrText> RunFixedBatchOneParallel(
 	const std::string& alphabet) {
 	std::vector<OcrText> all(rgb_u8_hwc.size());
 	const size_t worker_count = parallel_utils::ResolveWorkerCount(rgb_u8_hwc.size());
-	const size_t chunk = (rgb_u8_hwc.size() + worker_count - 1) / worker_count;
+	if (worker_count <= 1 || rgb_u8_hwc.size() <= 1) {
+		for (size_t i = 0; i < rgb_u8_hwc.size(); ++i) {
+			auto out = RunBatch(session, {rgb_u8_hwc[i]}, alphabet);
+			all[i] = std::move(out[0]);
+		}
+		return all;
+	}
 
-	std::vector<std::future<void>> workers;
+	// Atomic scheduling giup can bang tai va giam overhead tao future.
+	std::atomic<size_t> next_index{0};
+	std::vector<std::thread> workers;
 	workers.reserve(worker_count);
 	for (size_t w = 0; w < worker_count; ++w) {
-		const size_t begin = w * chunk;
-		if (begin >= rgb_u8_hwc.size()) {
-			break;
-		}
-		const size_t end = std::min(rgb_u8_hwc.size(), begin + chunk);
-		workers.push_back(std::async(std::launch::async, [&, begin, end]() {
-			for (size_t i = begin; i < end; ++i) {
+		workers.emplace_back([&]() {
+			while (true) {
+				const size_t i = next_index.fetch_add(1, std::memory_order_relaxed);
+				if (i >= rgb_u8_hwc.size()) {
+					break;
+				}
 				auto out = RunBatch(session, {rgb_u8_hwc[i]}, alphabet);
 				all[i] = std::move(out[0]);
 			}
-		}));
+		});
 	}
 	for (auto& t : workers) {
-		t.get();
+		t.join();
 	}
 	return all;
 }
@@ -130,14 +212,13 @@ std::vector<OcrText> RunBatch(
 	if (rgb_u8_hwc.empty()) {
 		return {};
 	}
+	const auto meta = GetSessionMeta(session);
 
 	// Xử lý model fix batch (thường gặp: batch=1)
-	auto input_type_info = session.GetInputTypeInfo(0);
-	auto input_tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
-	const auto input_shape = input_tensor_info.GetShape();
-	if (input_shape.size() == 4 && input_shape[0] > 0) {
-		const int64_t fixed_batch = input_shape[0];
+	if (meta->fixed_batch > 0) {
+		const int64_t fixed_batch = meta->fixed_batch;
 		if (fixed_batch == 1 && rgb_u8_hwc.size() > 1) {
+			// Model batch=1: fan-out thanh nhieu infer don de tan dung CPU.
 			return RunFixedBatchOneParallel(session, rgb_u8_hwc, alphabet);
 		}
 		if (fixed_batch > 1 && static_cast<int64_t>(rgb_u8_hwc.size()) != fixed_batch) {
@@ -147,29 +228,12 @@ std::vector<OcrText> RunBatch(
 
 	const int h = rgb_u8_hwc[0].rows;
 	const int w = rgb_u8_hwc[0].cols;
+	// Validate dong nhat shape/type toan bo batch truoc khi tao tensor.
 	for (const auto& m : rgb_u8_hwc) {
 		EnsureRgbU8(m, h, w);
 	}
 
-	Ort::AllocatorWithDefaultOptions allocator;
-	auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
-	const char* input_name = input_name_alloc.get();
-
-	const size_t output_count = session.GetOutputCount();
-	if (output_count == 0) {
-		throw std::runtime_error("OCR model khong co output");
-	}
-	std::vector<Ort::AllocatedStringPtr> output_name_alloc;
-	std::vector<const char*> output_names;
-	output_name_alloc.reserve(output_count);
-	output_names.reserve(output_count);
-	for (size_t i = 0; i < output_count; ++i) {
-		output_name_alloc.push_back(session.GetOutputNameAllocated(i, allocator));
-		output_names.push_back(output_name_alloc.back().get());
-	}
-
-	const auto elem_type = input_tensor_info.GetElementType();
-	if (elem_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
+	if (meta->input_elem_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
 		throw std::runtime_error("OCR input type khong dung (can uint8)");
 	}
 
@@ -179,6 +243,7 @@ std::vector<OcrText> RunBatch(
 	std::vector<uint8_t> input;
 	input.resize(static_cast<size_t>(batch) * per);
 	for (size_t i = 0; i < rgb_u8_hwc.size(); ++i) {
+		// Layout NHWC uint8: copy lien tiep tung anh vao vung batch.
 		std::memcpy(input.data() + i * per, rgb_u8_hwc[i].data, per);
 	}
 
@@ -190,14 +255,14 @@ std::vector<OcrText> RunBatch(
 		run_input_shape.data(),
 		run_input_shape.size());
 
-	const std::vector<const char*> input_names = {input_name};
+	const std::vector<const char*> input_names = {meta->input_name.c_str()};
 	auto outputs = session.Run(
 		Ort::RunOptions{nullptr},
 		input_names.data(),
 		&input_tensor,
 		1,
-		output_names.data(),
-		output_names.size());
+		meta->output_names.data(),
+		meta->output_names.size());
 
 	Ort::Value& out0 = outputs.at(0);
 	auto decoded = DecodeBatchOutput(out0);
@@ -207,6 +272,7 @@ std::vector<OcrText> RunBatch(
 	texts.reserve(decoded.size());
 	for (auto& one : decoded) {
 		OcrText t;
+		// Postprocess CTC: collapse + loai blank -> chuoi bien so.
 		t.text = post_process_out_string::PostprocessIndicesToString(one.indices, alphabet, blank_index);
 		t.conf_avg = ComputeAvgConfNonBlank(one.indices, one.conf, blank_index);
 		texts.push_back(std::move(t));

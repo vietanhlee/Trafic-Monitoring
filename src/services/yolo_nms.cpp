@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai Non-Maximum Suppression cho ket qua detect YOLO.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/services/yolo_detector_internal.h"
 
 #include <algorithm>
@@ -8,6 +12,7 @@ namespace yolo_detector {
 namespace detail {
 
 float IoU(const Detection& a, const Detection& b) {
+	// Tinh phan giao / phan hop giua 2 bbox.
 	const float xx1 = std::max(a.x1, b.x1);
 	const float yy1 = std::max(a.y1, b.y1);
 	const float xx2 = std::min(a.x2, b.x2);
@@ -50,11 +55,13 @@ static inline bool ShouldSuppress(
 	const float inter = (xx2 - xx1) * (yy2 - yy1);
 	const float uni = area_i + area_j - inter;
 	if (uni > 0.0f && inter >= iou_threshold * uni) {
+		// Dieu kien NMS chuan theo IoU.
 		return true;
 	}
 
 	const float min_area = std::max(1e-6f, std::min(area_i, area_j));
 	const float containment = inter / min_area;
+	// Them rang buoc containment de loai box long nhau qua nhieu.
 	return containment >= kContainmentSuppression;
 }
 
@@ -72,6 +79,7 @@ static void NmsSingleClass(
 
 	for (size_t ii = 0; ii < limit; ++ii) {
 		if (suppressed[ii]) continue;
+		// Giu box score cao nhat chua bi suppress.
 		const size_t i = indices[ii];
 		kept.push_back(dets[i]);
 
@@ -108,8 +116,15 @@ std::vector<Detection> ApplyNMS(std::vector<Detection> dets, float iou_threshold
 	}
 
 	std::sort(dets.begin(), dets.end(), [](const Detection& a, const Detection& b) {
+		// Sort giam dan theo score de NMS greedy hoat dong dung.
 		return a.score > b.score;
 	});
+
+	// iou_threshold <= 0 duoc xem la tat NMS.
+	// Van giu thu tu score giam dan de cac nhanh o tren co the lay top-1 on dinh.
+	if (iou_threshold <= 0.0f) {
+		return dets;
+	}
 
 	const size_t n = dets.size();
 	std::vector<float> areas(n);

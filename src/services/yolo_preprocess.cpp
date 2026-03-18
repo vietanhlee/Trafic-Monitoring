@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai letterbox/chuyen doi tensor input cho YOLO.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/services/yolo_detector_internal.h"
 
 #include <algorithm>
@@ -40,16 +44,19 @@ InputSpec GetInputSpec(Ort::Session& session) {
 	const bool dim1_is_c = (shape[1] == 3);
 	const bool dim3_is_c = (shape[3] == 3);
 	if (dim1_is_c && !dim3_is_c) {
+		// Dang NCHW: [N, C, H, W]
 		spec.nchw = true;
 		spec.c = 3;
 		spec.h = shape[2];
 		spec.w = shape[3];
 	} else if (dim3_is_c && !dim1_is_c) {
+		// Dang NHWC: [N, H, W, C]
 		spec.nchw = false;
 		spec.c = 3;
 		spec.h = shape[1];
 		spec.w = shape[2];
 	} else {
+		// Truong hop mo ho: fallback NCHW de giu tuong thich model cu.
 		spec.nchw = true;
 		spec.c = (shape[1] > 0 ? shape[1] : 3);
 		spec.h = shape[2];
@@ -81,6 +88,7 @@ cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, Lette
 
 	const float r = std::min(static_cast<float>(target_w) / static_cast<float>(info.orig_w),
 						static_cast<float>(target_h) / static_cast<float>(info.orig_h));
+	// scale dong nhat theo canh ngan hon de giu ty le hinh.
 	info.scale = r;
 
 	const int new_w = static_cast<int>(std::round(info.orig_w * r));
@@ -92,6 +100,7 @@ cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, Lette
 	cv::resize(bgr, resized, cv::Size(new_w, new_h), 0.0, 0.0, cv::INTER_LINEAR);
 
 	cv::Mat padded(target_h, target_w, CV_8UC3, cv::Scalar(114, 114, 114));
+	// Dien nen 114 theo convention YOLO letterbox.
 	resized.copyTo(padded(cv::Rect(info.pad_x, info.pad_y, new_w, new_h)));
 
 	cv::Mat rgb;
@@ -122,7 +131,7 @@ void FillTensorFromRGB_NCHW(const std::vector<cv::Mat>& rgbs_u8, int h, int w, s
 					channels[c].ptr<float>(0), plane * sizeof(float));
 			}
 		} else {
-			// uint8: split trực tiếp
+			// uint8: giu nguyen gia tri pixel, split truc tiep theo kenh.
 			std::vector<cv::Mat> channels(3);
 			cv::split(rgbs_u8[i], channels);
 			for (int c = 0; c < 3; ++c) {

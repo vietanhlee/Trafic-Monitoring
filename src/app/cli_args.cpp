@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai parse tham so dong lenh va kiem tra hop le dau vao.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/app/cli_args.h"
 
 #include <iostream>
@@ -7,6 +11,7 @@
 
 namespace cli_args {
 
+// In chi tiet cach dung cho cac mode: image, folder, video.
 void PrintUsage(const char* argv0, std::ostream& os) {
 	os
 		<< "Cach dung:\n"
@@ -14,7 +19,7 @@ void PrintUsage(const char* argv0, std::ostream& os) {
 		<< "  " << argv0 << " --folder <duong_dan_thu_muc_anh>\n\n"
 		<< "  " << argv0 << " --video <duong_dan_video.mp4> [--show] [--nosave]\n\n"
 		<< "Ghi chu:\n"
-		<< "  - Pipeline: vehicle_detection (YOLO26 NMS-free) -> plate_detection (YOLO26 NMS-free, batch) -> OCR plate (batch)\n"
+		<< "  - Pipeline: vehicle_detection (YOLO26 NMS-free) -> crop vehicle -> plate_detection (multi-thread per vehicle, no NMS, lay top-1 plate moi xe) -> OCR plate (batch)\n"
 		<< "  - Models (fix cung trong include/ocrplate/core/app_config.h):\n"
 		<< "      vehicle: " << app_config::kVehicleModelPath << "\n"
 		<< "      plate  : " << app_config::kPlateModelPath << "\n"
@@ -26,6 +31,7 @@ void PrintUsage(const char* argv0, std::ostream& os) {
 		<< "  - --nosave: khong luu file output (chi hop le khi dung voi --image hoac --video)\n";
 }
 
+// Parse va validate tham so CLI; nem exception neu tham so khong hop le.
 Options Parse(int argc, char** argv) {
 	Options opt;
 	for (int i = 1; i < argc; ++i) {

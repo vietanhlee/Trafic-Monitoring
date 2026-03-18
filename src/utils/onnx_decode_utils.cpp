@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai helper giai ma tensor output ONNX thanh du lieu co nghia.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/utils/onnx_decode_utils.h"
 
 #include <cmath>

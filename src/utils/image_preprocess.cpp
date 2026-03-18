@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai cac ham xu ly anh tien de dung chung trong pipeline.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/utils/image_preprocess.h"
 
 #include <opencv2/imgcodecs.hpp>

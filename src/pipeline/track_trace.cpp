@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai ve duong di track len khung hinh de quan sat hanh vi.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/pipeline/track_trace.h"
 
 #include <algorithm>

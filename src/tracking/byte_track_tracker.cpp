@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai logic ByteTrack gan track-id va cap nhat trang thai track.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/tracking/byte_track_tracker.h"
 
 #include <algorithm>
@@ -10,6 +14,7 @@
 namespace vehicle_tracker {
 namespace {
 
+// Tinh IoU giua 2 bbox detection.
 float IoU(const yolo_detector::Detection& a, const yolo_detector::Detection& b) {
 	const float x1 = std::max(a.x1, b.x1);
 	const float y1 = std::max(a.y1, b.y1);
@@ -34,6 +39,7 @@ struct CenterSizeBox {
 	float h = 0.0f;
 };
 
+// Chuyen bbox (x1,y1,x2,y2) sang dang tam + kich thuoc.
 CenterSizeBox ToCenterSize(const yolo_detector::Detection& d) {
 	CenterSizeBox b;
 	const float w = std::max(0.0f, d.x2 - d.x1);
@@ -45,6 +51,7 @@ CenterSizeBox ToCenterSize(const yolo_detector::Detection& d) {
 	return b;
 }
 
+// Chuyen nguoc tu tam + kich thuoc ve Detection.
 yolo_detector::Detection FromCenterSize(const CenterSizeBox& b, float score, int cls) {
 	yolo_detector::Detection d;
 	const float w = std::max(1.0f, b.w);
@@ -58,6 +65,7 @@ yolo_detector::Detection FromCenterSize(const CenterSizeBox& b, float score, int
 	return d;
 }
 
+// Khoi tao state ban dau cho mot track moi tu detection dau tien.
 void InitializeTrackState(TrackState& t, const yolo_detector::Detection& det) {
 	const CenterSizeBox b = ToCenterSize(det);
 	t.det = det;
@@ -73,6 +81,7 @@ void InitializeTrackState(TrackState& t, const yolo_detector::Detection& det) {
 	t.vh = 0.0f;
 }
 
+// Du doan vi tri track qua 1 frame dua tren van toc hien tai.
 void PredictOneFrame(TrackState& t) {
 	if (!t.has_last_meas) {
 		return;
@@ -87,6 +96,7 @@ void PredictOneFrame(TrackState& t) {
 	t.det = FromCenterSize(pred, t.det.score, t.det.cls);
 }
 
+// Cap nhat track bang do do moi va lam muot van toc de giam rung.
 void UpdateWithMeasurement(TrackState& t, const yolo_detector::Detection& meas) {
 	const CenterSizeBox b = ToCenterSize(meas);
 	if (t.has_last_meas) {
@@ -113,6 +123,7 @@ void UpdateWithMeasurement(TrackState& t, const yolo_detector::Detection& meas) 
 
 // Hungarian / assignment (min-cost) for rectangular matrix with n <= m.
 // 1-indexed internally.
+// Giai bai toan gan cap track-detection theo chi phi nho nhat.
 std::vector<int> SolveAssignmentMinCost(const std::vector<std::vector<float>>& a) {
 	// a is 1..n, 1..m
 	const int n = static_cast<int>(a.size()) - 1;
@@ -186,6 +197,7 @@ struct AssignmentResult {
 	std::vector<size_t> unmatched_det_indices;
 };
 
+// Tao bang gan cap track<->detection voi rang buoc IoU va class.
 AssignmentResult AssignTracksToDets(
 	const std::vector<size_t>& track_indices,
 	const std::vector<size_t>& det_indices,
@@ -263,6 +275,7 @@ AssignmentResult AssignTracksToDets(
 
 } // namespace
 
+// Khoi tao ByteTrack voi nguong IoU/score va tham so vong doi track.
 ByteTrackTracker::ByteTrackTracker(
 	float iou_threshold,
 	int max_missed_frames,
@@ -303,14 +316,17 @@ ByteTrackTracker::ByteTrackTracker(
 	}
 }
 
+// Tien toi 1 frame thoi gian cho tat ca track (predict-only).
 void ByteTrackTracker::AdvanceFrame() {
 	++frame_index_;
 	for (auto& t : tracks_) {
+		// Tang khoang cach thoi gian tu lan update gan nhat, sau do predict vi tri moi.
 		t.frames_since_update += 1;
 		PredictOneFrame(t);
 	}
 }
 
+// Cap nhat tracker bang detection frame hien tai va tra ve track_id theo detection.
 std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detection>& detections) {
 	std::vector<int> track_ids(detections.size(), -1);
 	// Split detections by confidence (ByteTrack-style: high then low).
@@ -321,8 +337,10 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 	for (size_t i = 0; i < detections.size(); ++i) {
 		const float s = detections[i].score;
 		if (s >= high_score_threshold_) {
+			// Nhom tin cay cao: uu tien match o stage dau.
 			high_det_indices.push_back(i);
 		} else if (s >= low_score_threshold_) {
+			// Nhom tin cay thap: dung o stage cuu track da ton tai.
 			low_det_indices.push_back(i);
 		}
 	}
@@ -357,6 +375,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 
 	auto mark_match = [&](size_t track_idx, size_t det_idx) {
 		TrackState& t = tracks_[track_idx];
+		// Match thanh cong: cap nhat trang thai va gan track_id cho detection.
 		UpdateWithMeasurement(t, detections[det_idx]);
 		t.hit_count += 1;
 		t.missed_count = 0;
@@ -390,6 +409,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 		}
 	}
 	const float unconfirmed_iou_thr = std::min(0.80f, iou_threshold_ + 0.05f);
+	// Track chua confirm can IoU chat hon de tranh nhay ID som.
 	AssignmentResult stage1b = AssignTracksToDets(unconfirmed_tracks, high_remaining, tracks_, detections, unconfirmed_iou_thr);
 	for (const auto& m : stage1b.matches) {
 		const size_t track_idx = unconfirmed_tracks[m.first];
@@ -430,6 +450,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 			continue;
 		}
 		TrackState t;
+		// Track moi tao tu detection score cao se duoc uu tien giu lai.
 		t.track_id = next_track_id_++;
 		InitializeTrackState(t, detections[di]);
 		t.hit_count = 1;
@@ -452,6 +473,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 			continue;
 		}
 		TrackState t;
+		// Van tao track cho low-score de giu tinh lien tuc, se bi prune neu khong on dinh.
 		t.track_id = next_track_id_++;
 		InitializeTrackState(t, detections[di]);
 		t.hit_count = 1;
@@ -487,6 +509,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 	return track_ids;
 }
 
+// Xoa toan bo trang thai tracker, quay ve ban dau.
 void ByteTrackTracker::Reset() {
 	tracks_.clear();
 	next_track_id_ = 1;

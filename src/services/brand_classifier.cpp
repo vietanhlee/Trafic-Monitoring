@@ -1,17 +1,60 @@
+/*
+ * Mo ta file: Trien khai preprocess/infer/postprocess cho model nhan dien hang xe.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/services/brand_classifier.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cmath>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <opencv2/imgproc.hpp>
 
 namespace brand_classifier {
 namespace {
+
+struct BrandSessionIoName {
+	std::string input_name;
+	std::string output_name;
+};
+
+std::shared_ptr<const BrandSessionIoName> GetSessionIoName(Ort::Session& session) {
+	static std::mutex cache_mu;
+	static std::unordered_map<std::uintptr_t, std::shared_ptr<const BrandSessionIoName>> cache;
+
+	const auto key = reinterpret_cast<std::uintptr_t>(&session);
+	{
+		std::lock_guard<std::mutex> lk(cache_mu);
+		auto it = cache.find(key);
+		if (it != cache.end()) {
+			return it->second;
+		}
+	}
+
+	Ort::AllocatorWithDefaultOptions allocator;
+	// Cache ten input/output theo session de tranh truy van metadata lap lai.
+	auto built = std::make_shared<BrandSessionIoName>();
+	auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
+	built->input_name = input_name_alloc.get();
+	auto output_name_alloc = session.GetOutputNameAllocated(0, allocator);
+	built->output_name = output_name_alloc.get();
+
+	{
+		std::lock_guard<std::mutex> lk(cache_mu);
+		auto [it, inserted] = cache.emplace(key, built);
+		if (!inserted) {
+			return it->second;
+		}
+	}
+	return built;
+}
 
 void PrepareInputNchwFloat(const cv::Mat& bgr, int input_h, int input_w, std::vector<float>& out) {
 	if (bgr.empty()) {
@@ -22,6 +65,7 @@ void PrepareInputNchwFloat(const cv::Mat& bgr, int input_h, int input_w, std::ve
 	}
 
 	cv::Mat rgb;
+	// Model brand dung RGB + tensor NCHW float32 trong mien [0,1].
 	cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
 	cv::Mat resized;
 	cv::resize(rgb, resized, cv::Size(input_w, input_h), 0.0, 0.0, cv::INTER_LINEAR);
@@ -37,6 +81,7 @@ void PrepareInputNchwFloat(const cv::Mat& bgr, int input_h, int input_w, std::ve
 	const size_t plane = static_cast<size_t>(input_h) * static_cast<size_t>(input_w);
 	for (int y = 0; y < input_h; ++y) {
 		for (int x = 0; x < input_w; ++x) {
+			// Chuyen HWC -> NCHW de khop input model.
 			const size_t idx_hwc = (static_cast<size_t>(y) * static_cast<size_t>(input_w) + static_cast<size_t>(x)) * 3ull;
 			const size_t pos = static_cast<size_t>(y) * static_cast<size_t>(input_w) + static_cast<size_t>(x);
 			out[0 * plane + pos] = static_cast<float>(p[idx_hwc + 0]) / 255.0f;
@@ -55,6 +100,7 @@ BrandResult DecodeTop1(const float* data, int64_t class_count) {
 	bool all_prob = (data[0] >= 0.0f && data[0] <= 1.0f);
 	double sum_row = static_cast<double>(data[0]);
 	for (int64_t i = 1; i < class_count; ++i) {
+		// Lay chi so co score lon nhat (argmax).
 		const float v = data[i];
 		if (v > best_val) {
 			best_val = v;
@@ -65,10 +111,14 @@ BrandResult DecodeTop1(const float* data, int64_t class_count) {
 	}
 
 	float conf = 0.0f;
+	// Ho tro 2 kieu output pho bien:
+	// 1) da la probability (tong ~1), 2) logit -> tinh softmax top-1 conf.
 	const bool looks_like_prob = all_prob && (std::abs(sum_row - 1.0) <= 1e-2);
 	if (looks_like_prob) {
+		// Output da la probability -> lay truc tiep best_val.
 		conf = best_val;
 	} else {
+		// Output la logits -> uoc luong conf top-1 bang softmax on-the-fly.
 		double sum_exp = 0.0;
 		for (int64_t i = 0; i < class_count; ++i) {
 			sum_exp += std::exp(static_cast<double>(data[i] - best_val));
@@ -94,10 +144,12 @@ std::vector<BrandResult> ClassifyBatch(
 	}
 
 	const size_t total_images = bgr_images.size();
+	const auto io_name = GetSessionIoName(session);
 
 	std::vector<std::vector<float>> prepared_inputs;
 	prepared_inputs.resize(total_images);
 	if (total_images == 1) {
+		// Fast-path cho 1 anh de tranh over-threading.
 		PrepareInputNchwFloat(bgr_images[0], input_h, input_w, prepared_inputs[0]);
 	} else {
 		const unsigned int hw_threads = std::thread::hardware_concurrency();
@@ -139,13 +191,7 @@ std::vector<BrandResult> ClassifyBatch(
 	}
 
 	auto infer_one = [&](size_t idx) -> BrandResult {
-		Ort::AllocatorWithDefaultOptions allocator;
-		auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
-		const char* input_name = input_name_alloc.get();
-		auto output_name_alloc = session.GetOutputNameAllocated(0, allocator);
-		const char* output_name = output_name_alloc.get();
-
-		std::vector<int64_t> tensor_shape = {1, 3, input_h, input_w};
+		const std::vector<int64_t> tensor_shape = {1, 3, input_h, input_w};
 		Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 		Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
 			mem_info,
@@ -154,7 +200,9 @@ std::vector<BrandResult> ClassifyBatch(
 			tensor_shape.data(),
 			tensor_shape.size());
 
-		const std::vector<const char*> input_names = {input_name};
+		const std::vector<const char*> input_names = {io_name->input_name.c_str()};
+		const char* output_name = io_name->output_name.c_str();
+		// Moi anh infer rieng 1 batch=1; ben ngoai da song song hoa theo idx.
 		auto outputs = session.Run(
 			Ort::RunOptions{nullptr},
 			input_names.data(),
@@ -206,6 +254,7 @@ std::vector<BrandResult> ClassifyBatch(
 		workers.emplace_back([&]() {
 			try {
 				while (true) {
+					// Dynamic scheduling giup can bang khi moi infer co do tre khac nhau.
 					const size_t idx = next_index.fetch_add(1);
 					if (idx >= total_images) {
 						break;

@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Chuong trinh benchmark tung stage cua pipeline OCR bien so.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -31,15 +35,19 @@ struct BenchmarkOptions {
 };
 
 struct StageMetrics {
+	// Vehicle branch
 	double vehicle_detect_ms = 0.0;
 	double vehicle_crop_ms = 0.0;
+	// Brand branch
 	double brand_branch_ms = 0.0;
 	double brand_classify_ms = 0.0;
+	// Plate branch
 	double plate_branch_ms = 0.0;
 	double plate_detect_ms = 0.0;
 	double plate_map_ms = 0.0;
 	double plate_crop_preprocess_ms = 0.0;
 	double plate_ocr_ms = 0.0;
+	// Merge + total
 	double merge_ms = 0.0;
 	double total_ms = 0.0;
 	size_t vehicles_detected = 0;
@@ -66,8 +74,10 @@ struct BrandBranchResult {
 	double classify_ms = 0.0;
 };
 
+// Chuan hoa bbox ve mien anh hop le de crop an toan.
 cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h);
 
+// In huong dan su dung benchmark.
 void PrintUsage(const char* prog) {
 	std::cout
 		<< "Usage: " << prog << " [--image <path>] [--warmup <N>] [--runs <N>]\n"
@@ -76,6 +86,7 @@ void PrintUsage(const char* prog) {
 		<< "  --runs    : So lan do benchmark (mac dinh 10)\n";
 }
 
+// Parse tham so benchmark (--image, --warmup, --runs).
 BenchmarkOptions ParseArgs(int argc, char** argv) {
 	BenchmarkOptions opt;
 	for (int i = 1; i < argc; ++i) {
@@ -117,6 +128,7 @@ BenchmarkOptions ParseArgs(int argc, char** argv) {
 	return opt;
 }
 
+// Chuyen bbox float sang Rect da clamp bien.
 cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
 	int ix1 = std::max(0, std::min(static_cast<int>(std::floor(x1)), w - 1));
 	int iy1 = std::max(0, std::min(static_cast<int>(std::floor(y1)), h - 1));
@@ -127,10 +139,12 @@ cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
 	return cv::Rect(ix1, iy1, rw, rh);
 }
 
+// Tinh thoi gian mili-giay giua 2 moc thoi gian.
 double ElapsedMs(const std::chrono::steady_clock::time_point& t0, const std::chrono::steady_clock::time_point& t1) {
 	return std::chrono::duration<double, std::milli>(t1 - t0).count();
 }
 
+// Chay 1 lan pipeline va thu thap metric chi tiet theo tung stage.
 StageMetrics RunPipelineOnce(
 	const cv::Mat& bgr,
 	Ort::Session& vehicle_sess,
@@ -160,17 +174,14 @@ StageMetrics RunPipelineOnce(
 	vehicle_rects.reserve(vehicles.size());
 	vehicles_used.reserve(vehicles.size());
 	for (const auto& v : vehicles) {
-		const float box_h = v.y2 - v.y1;
-		const float expand_y2 = v.y2 + box_h * 0.05f;
-		cv::Rect r = ToRectClamped(v.x1, v.y1, v.x2, expand_y2, bgr.cols, bgr.rows);
+		cv::Rect r = ToRectClamped(v.x1, v.y1, v.x2, v.y2, bgr.cols, bgr.rows);
 		if (r.width <= 2 || r.height <= 2) {
 			continue;
 		}
 		vehicle_rects.push_back(r);
-		vehicle_crops.push_back(bgr(r).clone());
-		yolo_detector::Detection v_expanded = v;
-		v_expanded.y2 = std::min(expand_y2, static_cast<float>(bgr.rows));
-		vehicles_used.push_back(v_expanded);
+		// Dung ROI view de benchmark tap trung vao infer thay vi copy bo nho.
+		vehicle_crops.push_back(bgr(r));
+		vehicles_used.push_back(v);
 	}
 	const auto t_crop_1 = std::chrono::steady_clock::now();
 	m.vehicle_crop_ms = ElapsedMs(t_crop_0, t_crop_1);
@@ -220,7 +231,7 @@ StageMetrics RunPipelineOnce(
 			plate_sess,
 			vehicle_crops,
 			app_config::kPlateConfThresh,
-			app_config::kNmsIouThresh);
+			app_config::kPlateNmsIouThresh);
 		const auto t_plate_1 = std::chrono::steady_clock::now();
 		pr.plate_detect_ms = ElapsedMs(t_plate_0, t_plate_1);
 
@@ -229,7 +240,7 @@ StageMetrics RunPipelineOnce(
 			vehicle_crops,
 			app_config::kPlateConfThresh);
 
-		auto map_future = std::async(std::launch::async, [&]() {
+		auto map_work = [&]() {
 			const auto t_map_0 = std::chrono::steady_clock::now();
 			std::vector<yolo_detector::Detection> mapped;
 			mapped.reserve(candidates.size());
@@ -246,23 +257,38 @@ StageMetrics RunPipelineOnce(
 			}
 			const auto t_map_1 = std::chrono::steady_clock::now();
 			return std::make_tuple(std::move(mapped), std::move(has_plate), ElapsedMs(t_map_0, t_map_1));
-		});
+		};
 
-		auto crop_future = std::async(std::launch::async, [&]() {
+		auto crop_work = [&]() {
 			const auto t_crop_0 = std::chrono::steady_clock::now();
 			std::vector<cv::Mat> plate_rgb_ocr = plate_parallel::PreprocessPlatesParallel(candidates, vehicle_crops, app_config::kInputW, app_config::kInputH);
 			const auto t_crop_1 = std::chrono::steady_clock::now();
 			return std::make_pair(std::move(plate_rgb_ocr), ElapsedMs(t_crop_0, t_crop_1));
-		});
+		};
 
-		auto mapped_out = map_future.get();
-		pr.plate_boxes_in_image = std::move(std::get<0>(mapped_out));
-		pr.vehicle_has_plate = std::move(std::get<1>(mapped_out));
-		pr.map_ms = std::get<2>(mapped_out);
+		std::vector<cv::Mat> plate_rgb_ocr;
+		if (candidates.size() < 4) {
+			// Workload nho: chay tuan tu de tranh overhead tao future/thread.
+			auto mapped_out = map_work();
+			pr.plate_boxes_in_image = std::move(std::get<0>(mapped_out));
+			pr.vehicle_has_plate = std::move(std::get<1>(mapped_out));
+			pr.map_ms = std::get<2>(mapped_out);
 
-		auto crop_out = crop_future.get();
-		std::vector<cv::Mat> plate_rgb_ocr = std::move(crop_out.first);
-		pr.crop_preprocess_ms = crop_out.second;
+			auto crop_out = crop_work();
+			plate_rgb_ocr = std::move(crop_out.first);
+			pr.crop_preprocess_ms = crop_out.second;
+		} else {
+			auto map_future = std::async(std::launch::async, map_work);
+			auto crop_future = std::async(std::launch::async, crop_work);
+			auto mapped_out = map_future.get();
+			pr.plate_boxes_in_image = std::move(std::get<0>(mapped_out));
+			pr.vehicle_has_plate = std::move(std::get<1>(mapped_out));
+			pr.map_ms = std::get<2>(mapped_out);
+
+			auto crop_out = crop_future.get();
+			plate_rgb_ocr = std::move(crop_out.first);
+			pr.crop_preprocess_ms = crop_out.second;
+		}
 
 		if (!plate_rgb_ocr.empty()) {
 			const auto t_ocr_0 = std::chrono::steady_clock::now();
@@ -293,7 +319,8 @@ StageMetrics RunPipelineOnce(
 
 	const auto t_merge_0 = std::chrono::steady_clock::now();
 	std::vector<int> brand_id_per_vehicle(vehicles_used.size(), -1);
-	for (size_t k = 0; k < car_indices.size(); ++k) {
+	const size_t brand_count = std::min(car_indices.size(), brand_result.brand_results.size());
+	for (size_t k = 0; k < brand_count; ++k) {
 		brand_id_per_vehicle[car_indices[k]] = brand_result.brand_results[k].class_id;
 	}
 	std::vector<VehicleOverlayResult> vehicles_overlay;
@@ -332,6 +359,7 @@ StageMetrics RunPipelineOnce(
 	return m;
 }
 
+// Kiem tra anh dau vao va duong dan model truoc khi benchmark.
 void ValidateInputPaths(const BenchmarkOptions& opt) {
 	if (!fs::exists(opt.image_path) || !fs::is_regular_file(opt.image_path)) {
 		throw std::runtime_error("Anh khong hop le: " + opt.image_path.string());
@@ -358,6 +386,7 @@ void ValidateInputPaths(const BenchmarkOptions& opt) {
 
 } // namespace
 
+// Entrypoint benchmark: warmup, do nhieu lan va in thong ke trung binh.
 int main(int argc, char** argv) {
 	try {
 		const BenchmarkOptions opt = ParseArgs(argc, argv);
@@ -374,23 +403,30 @@ int main(int argc, char** argv) {
 		std::cout << "Runs    : " << opt.bench_runs << "\n";
 
 		Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "benchmark");
-		Ort::SessionOptions sess_options;
-		sess_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-		sess_options.SetIntraOpNumThreads(4);
-		sess_options.SetInterOpNumThreads(1);
+		Ort::SessionOptions common_options;
+		common_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+		common_options.SetIntraOpNumThreads(4);
+		common_options.SetInterOpNumThreads(1);
 
-		Ort::Session vehicle_sess(env, app_config::kVehicleModelPath, sess_options);
-		Ort::Session plate_sess(env, app_config::kPlateModelPath, sess_options);
-		Ort::Session ocr_sess(env, app_config::kOcrModelPath, sess_options);
-		Ort::Session brand_sess(env, app_config::kBrandCarModelPath, sess_options);
+		Ort::SessionOptions plate_options;
+		plate_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+		plate_options.SetIntraOpNumThreads(1);
+		plate_options.SetInterOpNumThreads(1);
+
+		Ort::Session vehicle_sess(env, app_config::kVehicleModelPath, common_options);
+		Ort::Session plate_sess(env, app_config::kPlateModelPath, plate_options);
+		Ort::Session ocr_sess(env, app_config::kOcrModelPath, common_options);
+		Ort::Session brand_sess(env, app_config::kBrandCarModelPath, common_options);
 
 		for (int i = 0; i < opt.warmup_runs; ++i) {
+			// Warm-up de ONNX/OpenCV on dinh cache va tranh do sai run dau.
 			(void)RunPipelineOnce(bgr, vehicle_sess, plate_sess, ocr_sess, brand_sess);
 		}
 
 		std::vector<StageMetrics> runs;
 		runs.reserve(static_cast<size_t>(opt.bench_runs));
 		for (int i = 0; i < opt.bench_runs; ++i) {
+			// Moi run thu metric doc lap de tinh trung binh cuoi cung.
 			runs.push_back(RunPipelineOnce(bgr, vehicle_sess, plate_sess, ocr_sess, brand_sess));
 		}
 
@@ -412,6 +448,7 @@ int main(int argc, char** argv) {
 		std::cout << "\n=== Per-run (ms) ===\n";
 		for (size_t i = 0; i < runs.size(); ++i) {
 			const auto& r = runs[i];
+			// Cong don tung stage de tong hop average latency/FPS.
 			sum_vehicle += r.vehicle_detect_ms;
 			sum_vehicle_crop += r.vehicle_crop_ms;
 			sum_brand_branch += r.brand_branch_ms;
@@ -472,6 +509,7 @@ int main(int argc, char** argv) {
 		std::cout << "merge          : " << avg_merge << "\n";
 		std::cout << "total pipeline : " << avg_total << "\n";
 		if (avg_total > 0.0) {
+			// FPS infer-only = 1000ms / tong latency trung binh moi frame.
 			std::cout << "avg fps (infer only): " << (1000.0 / avg_total) << "\n";
 		}
 		std::cout << "avg vehicles used  : " << (sum_vehicles / denom) << "\n";

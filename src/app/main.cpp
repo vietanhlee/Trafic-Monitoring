@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Entrypoint chinh: doc nguon vao, chay pipeline va xuat ket qua.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include <filesystem>
 #include <chrono>
 #include <iostream>
@@ -39,6 +43,18 @@ struct PolygonPickerState {
 	cv::Point hover{-1, -1};
 };
 
+struct GateLineSelection {
+	cv::Point p1_local{0, 0};
+	cv::Point p2_local{0, 0};
+	bool enabled = false;
+};
+
+struct GateLinePickerState {
+	std::vector<cv::Point> points;
+	cv::Point hover{-1, -1};
+};
+
+// Xu ly su kien chuot khi nguoi dung ve polygon vung lam viec.
 void OnPolygonPickMouse(int event, int x, int y, int /*flags*/, void* userdata) {
 	auto* st = static_cast<PolygonPickerState*>(userdata);
 	if (st == nullptr) {
@@ -54,9 +70,27 @@ void OnPolygonPickMouse(int event, int x, int y, int /*flags*/, void* userdata) 
 	}
 }
 
+// Xu ly su kien chuot khi nguoi dung chon 2 diem tao duong ranh.
+void OnGateLinePickMouse(int event, int x, int y, int /*flags*/, void* userdata) {
+	auto* st = static_cast<GateLinePickerState*>(userdata);
+	if (st == nullptr) {
+		return;
+	}
+	st->hover = cv::Point(x, y);
+	if (event != cv::EVENT_LBUTTONDOWN) {
+		return;
+	}
+	if (st->points.size() >= 2) {
+		st->points.clear();
+	}
+	st->points.emplace_back(x, y);
+}
+
+// Tao WorkingArea tu da giac tuy chon; fallback toan frame neu polygon khong hop le.
 WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::vector<cv::Point>& polygon_abs) {
 	WorkingArea area;
 	if (polygon_abs.size() < 3) {
+		// Polygon khong hop le -> coi nhu toan bo frame la vung xu ly.
 		area.bbox = cv::Rect(0, 0, frame_size.width, frame_size.height);
 		area.polygon_abs = {
 			cv::Point(0, 0),
@@ -70,6 +104,7 @@ WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::v
 	}
 
 	cv::Rect raw = cv::boundingRect(polygon_abs);
+	// Clamp de dam bao bbox nam trong kich thuoc frame, tranh truy cap out-of-bound.
 	const int x = std::max(0, std::min(raw.x, frame_size.width - 1));
 	const int y = std::max(0, std::min(raw.y, frame_size.height - 1));
 	const int w = std::max(1, std::min(raw.width, frame_size.width - x));
@@ -87,6 +122,7 @@ WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::v
 	return area;
 }
 
+// Hien giao dien de nguoi dung chon vung infer theo da giac.
 WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 	const std::string win = "Chon vung da giac tracking";
 	PolygonPickerState state;
@@ -98,6 +134,7 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 		cv::Mat canvas = first_frame.clone();
 
 		if (!state.points.empty()) {
+			// Ve preview da giac dang tao (fill + canh + diem neo) de nguoi dung quan sat.
 			cv::Mat overlay = canvas.clone();
 			std::vector<std::vector<cv::Point>> poly_fill{state.points};
 			if (state.points.size() >= 3) {
@@ -124,6 +161,7 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 
 		cv::imshow(win, canvas);
 		const int key = cv::waitKey(16);
+		// ESC: bo qua, C: clear, U: undo, Enter/Space: xac nhan polygon.
 		if (key == 27) {
 			cv::destroyWindow(win);
 			return BuildWorkingAreaFromPolygon(first_frame.size(), {});
@@ -147,6 +185,63 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 	}
 }
 
+// Hien giao dien de nguoi dung chon 1 duong ranh (2 diem) de gate predict.
+GateLineSelection SelectGateLine(const cv::Mat& first_frame, const WorkingArea& area) {
+	const std::string win = "Chon duong ranh trigger predict";
+	GateLinePickerState state;
+
+	cv::namedWindow(win, cv::WINDOW_NORMAL);
+	cv::resizeWindow(win, 1280, 800);
+	cv::setMouseCallback(win, OnGateLinePickMouse, &state);
+
+	while (true) {
+		cv::Mat canvas = first_frame.clone();
+		if (area.polygon_abs.size() >= 3) {
+			std::vector<std::vector<cv::Point>> poly{area.polygon_abs};
+			cv::polylines(canvas, poly, true, cv::Scalar(120, 255, 170), 2, cv::LINE_AA);
+		}
+
+		for (const auto& p : state.points) {
+			cv::circle(canvas, p, 4, cv::Scalar(0, 0, 0), cv::FILLED, cv::LINE_AA);
+			cv::circle(canvas, p, 3, cv::Scalar(255, 255, 255), cv::FILLED, cv::LINE_AA);
+		}
+		if (state.points.size() == 1 && state.hover.x >= 0 && state.hover.y >= 0) {
+			cv::line(canvas, state.points[0], state.hover, cv::Scalar(90, 210, 255), 2, cv::LINE_AA);
+		}
+		if (state.points.size() == 2) {
+			cv::line(canvas, state.points[0], state.points[1], cv::Scalar(90, 210, 255), 2, cv::LINE_AA);
+		}
+
+		const std::string tip1 = "Click trai: chon 2 diem line | c: xoa line";
+		const std::string tip2 = "Enter/Space: xac nhan | Esc: bo qua (predict nhu cu)";
+		cv::rectangle(canvas, cv::Rect(12, 12, std::max(760, first_frame.cols / 2), 56), cv::Scalar(0, 0, 0), cv::FILLED);
+		cv::putText(canvas, tip1, cv::Point(20, 34), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(240, 240, 240), 1, cv::LINE_AA);
+		cv::putText(canvas, tip2, cv::Point(20, 58), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(170, 235, 255), 1, cv::LINE_AA);
+
+		cv::imshow(win, canvas);
+		const int key = cv::waitKey(16);
+		if (key == 27) {
+			cv::destroyWindow(win);
+			return GateLineSelection{};
+		}
+		if (key == 'c' || key == 'C') {
+			state.points.clear();
+			continue;
+		}
+		if (key == 13 || key == 10 || key == 32) {
+			if (state.points.size() == 2 && state.points[0] != state.points[1]) {
+				GateLineSelection out;
+				out.p1_local = cv::Point(state.points[0].x - area.bbox.x, state.points[0].y - area.bbox.y);
+				out.p2_local = cv::Point(state.points[1].x - area.bbox.x, state.points[1].y - area.bbox.y);
+				out.enabled = true;
+				cv::destroyWindow(win);
+				return out;
+			}
+		}
+	}
+}
+
+// Ve lop phu (overlay) cho vung lam viec de nguoi dung nhin ro ROI dang xu ly.
 void DrawWorkingAreaOverlay(cv::Mat& frame, const WorkingArea& area) {
 	if (!area.enabled || area.polygon_abs.size() < 3) {
 		return;
@@ -166,6 +261,20 @@ void DrawWorkingAreaOverlay(cv::Mat& frame, const WorkingArea& area) {
 	cv::putText(frame, lbl, anchor, cv::FONT_HERSHEY_SIMPLEX, 0.58, cv::Scalar(160, 255, 190), 1, cv::LINE_AA);
 }
 
+void DrawGateLineOverlay(cv::Mat& frame, const WorkingArea& area, const GateLineSelection& gate_line) {
+	if (!gate_line.enabled) {
+		return;
+	}
+	const cv::Point p1(gate_line.p1_local.x + area.bbox.x, gate_line.p1_local.y + area.bbox.y);
+	const cv::Point p2(gate_line.p2_local.x + area.bbox.x, gate_line.p2_local.y + area.bbox.y);
+	cv::line(frame, p1, p2, cv::Scalar(90, 210, 255), 3, cv::LINE_AA);
+	cv::line(frame, p1, p2, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+	const cv::Point anchor(std::max(8, std::min(p1.x, p2.x)), std::max(20, std::min(p1.y, p2.y) - 8));
+	cv::rectangle(frame, cv::Rect(anchor.x, anchor.y - 16, 146, 22), cv::Scalar(0, 0, 0), cv::FILLED);
+	cv::putText(frame, "PREDICT GATE LINE", cv::Point(anchor.x + 4, anchor.y), cv::FONT_HERSHEY_SIMPLEX, 0.48, cv::Scalar(170, 235, 255), 1, cv::LINE_AA);
+}
+
+// Xu ly 1 anh don: infer, annotate, luu/hien thi ket qua va tra ve ma trang thai.
 int ProcessOneImage(
 	const fs::path& image_path,
 	Ort::Session& vehicle_sess,
@@ -225,6 +334,7 @@ int ProcessOneImage(
 	return 0;
 }
 
+// Xu ly 1 video: infer theo chu ky frame, tracking lien tuc va xuat video annotate.
 int ProcessOneVideo(
 	const fs::path& video_path,
 	Ort::Session& vehicle_sess,
@@ -258,6 +368,7 @@ int ProcessOneVideo(
 
 	auto MakeDisplayFrame = [](const cv::Mat& src) {
 		const int max_w = std::max(1, app_config::kVideoPreviewMaxWidth);
+		// Chi resize khi can de giam chi phi copy/scale tren frame nho.
 		if (src.cols <= max_w) {
 			return src.clone();
 		}
@@ -280,6 +391,13 @@ int ProcessOneVideo(
 		<< " h=" << work_area.bbox.height
 		<< (work_area.enabled ? " (polygon)" : " (toan frame)")
 		<< "\n";
+	const GateLineSelection gate_line = SelectGateLine(frame, work_area);
+	if (gate_line.enabled) {
+		std::cout << "Predict gate line: p1=(" << gate_line.p1_local.x << "," << gate_line.p1_local.y
+			<< ") p2=(" << gate_line.p2_local.x << "," << gate_line.p2_local.y << ") [toa do trong ROI]\n";
+	} else {
+		std::cout << "Predict gate line: tat (xu ly nhu cu)\n";
+	}
 
 	if (show_output) {
 		display_thread = std::thread([&]() {
@@ -290,6 +408,7 @@ int ProcessOneVideo(
 				cv::Mat frame_to_show;
 				{
 					std::unique_lock<std::mutex> lock(display_mutex);
+					// Display thread ngu den khi co frame moi hoac co lenh dung.
 					display_cv.wait(lock, [&]() {
 						return stop_requested.load(std::memory_order_relaxed) || !display_queue.empty();
 					});
@@ -300,6 +419,7 @@ int ProcessOneVideo(
 						continue;
 					}
 					frame_to_show = std::move(display_queue.back());
+					// Chi giu frame moi nhat de uu tien realtime thay vi hien frame cu.
 					display_queue.clear();
 				}
 
@@ -348,6 +468,7 @@ int ProcessOneVideo(
 				bool popped = false;
 				{
 					std::unique_lock<std::mutex> lock(writer_mutex);
+					// Writer thread ngu den khi co frame can ghi hoac nhan tin hieu ket thuc.
 					writer_cv.wait(lock, [&]() {
 						return writer_stop.load(std::memory_order_relaxed) || !writer_queue.empty();
 					});
@@ -364,6 +485,7 @@ int ProcessOneVideo(
 				if (popped) {
 					writer_cv.notify_one();
 				}
+				// Ghi I/O tach rieng thread de khong chan vong infer.
 				writer.write(frame_to_write);
 			}
 		});
@@ -380,6 +502,9 @@ int ProcessOneVideo(
 	FrameOverlayResult cached_overlay;
 	bool has_cached_overlay = false;
 	TrackingRuntimeContext tracking_ctx;
+	tracking_ctx.enable_predict_on_line_cross = gate_line.enabled;
+	tracking_ctx.gate_line_p1 = gate_line.p1_local;
+	tracking_ctx.gate_line_p2 = gate_line.p2_local;
 	const int infer_every_n = std::max(1, app_config::kVideoInferEveryNFrames);
 	while (true) {
 		if (stop_requested.load(std::memory_order_relaxed)) {
@@ -415,11 +540,13 @@ int ProcessOneVideo(
 				cv::Mat work_view = frame(work_area.bbox);
 				cv::Mat infer_input;
 				if (work_area.enabled) {
+					// Neu co polygon: mask ROI de model chi nhin vung quan tam.
 					work_view.copyTo(infer_input);
 					cv::Mat masked;
 					cv::bitwise_and(infer_input, infer_input, masked, work_area.mask_local);
 					infer_input = std::move(masked);
 				} else {
+					// Khong co polygon: infer truc tiep tren ROI toan frame/bbox.
 					infer_input = work_view;
 				}
 				has_cached_overlay = InferFrameOverlay(
@@ -444,6 +571,7 @@ int ProcessOneVideo(
 			DrawFrameOverlay(draw_view, cached_overlay);
 		}
 		DrawWorkingAreaOverlay(frame, work_area);
+		DrawGateLineOverlay(frame, work_area, gate_line);
 
 		DrawFps(frame, display_fps);
 		if (save_output) {
@@ -451,9 +579,11 @@ int ProcessOneVideo(
 			{
 				std::unique_lock<std::mutex> lock(writer_mutex);
 				if (show_output && writer_queue.size() >= kMaxWriterQueue) {
+					// Uu tien realtime: bo frame cu neu queue day khi dang show.
 					writer_queue.pop_front();
 					++dropped_writer_frames;
 				} else {
+					// Che do khong show: cho queue rong bot de han che mat frame.
 					while (writer_queue.size() >= kMaxWriterQueue && !stop_requested.load(std::memory_order_relaxed)) {
 						writer_cv.wait_for(lock, std::chrono::milliseconds(2));
 					}
@@ -467,6 +597,7 @@ int ProcessOneVideo(
 			{
 				std::lock_guard<std::mutex> lock(display_mutex);
 				display_queue.emplace_back(std::move(display_frame));
+				// Chan queue display phinh to: luon cat frame cu nhat khi vuot nguong.
 				while (display_queue.size() > max_display_queue) {
 					display_queue.pop_front();
 				}
@@ -515,6 +646,7 @@ int ProcessOneVideo(
 	return 0;
 }
 
+// Diem vao chuong trinh: parse CLI, nap model, chon mode image/folder/video va thuc thi.
 int main(int argc, char** argv) {
 	try {
 		const fs::path vehicle_model_path = app_config::kVehicleModelPath;
@@ -572,15 +704,20 @@ int main(int argc, char** argv) {
 		}
 
 		Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "main");
-		Ort::SessionOptions sess_options;
-		sess_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-		sess_options.SetIntraOpNumThreads(4);
-		sess_options.SetInterOpNumThreads(1);
+		Ort::SessionOptions common_options;
+		common_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+		common_options.SetIntraOpNumThreads(4);
+		common_options.SetInterOpNumThreads(1);
 
-		Ort::Session vehicle_sess(env, vehicle_model_path.c_str(), sess_options);
-		Ort::Session plate_sess(env, plate_model_path.c_str(), sess_options);
-		Ort::Session ocr_sess(env, ocr_model_path.c_str(), sess_options);
-		Ort::Session brand_sess(env, brand_model_path.c_str(), sess_options);
+		Ort::SessionOptions plate_options;
+		plate_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+		plate_options.SetIntraOpNumThreads(1);
+		plate_options.SetInterOpNumThreads(1);
+
+		Ort::Session vehicle_sess(env, vehicle_model_path.c_str(), common_options);
+		Ort::Session plate_sess(env, plate_model_path.c_str(), plate_options);
+		Ort::Session ocr_sess(env, ocr_model_path.c_str(), common_options);
+		Ort::Session brand_sess(env, brand_model_path.c_str(), common_options);
 
 		if (!folder_path.empty()) {
 			std::vector<fs::path> image_paths;

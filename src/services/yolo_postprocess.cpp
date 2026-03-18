@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai parse output YOLO va quy doi toa do ve anh goc.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/services/yolo_detector_internal.h"
 
 #include <algorithm>
@@ -13,6 +17,7 @@ namespace detail {
 
 Detection MapBackToOriginal(const Detection& in, const LetterboxInfo& info) {
 	Detection out = in;
+	// Hoan tac letterbox: bo padding va chia theo scale de ve toa do anh goc.
 	out.x1 = (out.x1 - static_cast<float>(info.pad_x)) / info.scale;
 	out.y1 = (out.y1 - static_cast<float>(info.pad_y)) / info.scale;
 	out.x2 = (out.x2 - static_cast<float>(info.pad_x)) / info.scale;
@@ -61,6 +66,7 @@ static std::vector<std::vector<Detection>> ParseStandardYOLO(
 			}
 
 			if (!(best_score >= conf_threshold)) {
+				// Cat nguong score truoc NMS de giam so luong box xu ly.
 				continue;
 			}
 
@@ -86,12 +92,14 @@ static std::vector<std::vector<Detection>> ParseStandardYOLO(
 
 			Detection mapped = MapBackToOriginal(det, info);
 			if (mapped.x2 <= mapped.x1 || mapped.y2 <= mapped.y1) {
+				// Loai bo box suy bien sau khi map nguoc.
 				continue;
 			}
 			dets.push_back(mapped);
 		}
 
 		all[static_cast<size_t>(n)] = ApplyNMS(std::move(dets), nms_iou_threshold);
+		// NMS theo tung anh trong batch.
 	}
 	return all;
 }
@@ -140,6 +148,7 @@ std::vector<std::vector<Detection>> ParseOutput(
 	const bool is_standard_yolo = (dim1 < dim2 && dim1 >= 5);
 
 	if (is_standard_yolo) {
+		// Fast-path cho layout output pho bien (batch, channels, anchors).
 		return ParseStandardYOLO(data, batch, dim1, dim2, infos, conf_threshold, nms_iou_threshold);
 	}
 
@@ -163,6 +172,7 @@ std::vector<std::vector<Detection>> ParseOutput(
 
 			for (int64_t a = 0; a < num_anchors; ++a) {
 				const float* row = bdata + a * channels;
+				// Layout nay da dang row-major theo anchor, khong can transpose that su.
 				float best_score = -1.0f;
 				int best_cls = 0;
 				for (int64_t c = 0; c < num_classes; ++c) {

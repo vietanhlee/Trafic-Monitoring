@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Entrypoint thay the/tuong thich cho che do chay truyen thong.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include <filesystem>
 #include <chrono>
 #include <iostream>
@@ -411,15 +415,20 @@ int main(int argc, char** argv) {
 		}
 
 		Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "main");
-		Ort::SessionOptions sess_options;
-		sess_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-		sess_options.SetIntraOpNumThreads(4);
-		sess_options.SetInterOpNumThreads(1);
+		Ort::SessionOptions common_options;
+		common_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+		common_options.SetIntraOpNumThreads(4);
+		common_options.SetInterOpNumThreads(1);
 
-		Ort::Session vehicle_sess(env, vehicle_model_path.c_str(), sess_options);
-		Ort::Session plate_sess(env, plate_model_path.c_str(), sess_options);
-		Ort::Session ocr_sess(env, ocr_model_path.c_str(), sess_options);
-		Ort::Session brand_sess(env, brand_model_path.c_str(), sess_options);
+		Ort::SessionOptions plate_options;
+		plate_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+		plate_options.SetIntraOpNumThreads(1);
+		plate_options.SetInterOpNumThreads(1);
+
+		Ort::Session vehicle_sess(env, vehicle_model_path.c_str(), common_options);
+		Ort::Session plate_sess(env, plate_model_path.c_str(), plate_options);
+		Ort::Session ocr_sess(env, ocr_model_path.c_str(), common_options);
+		Ort::Session brand_sess(env, brand_model_path.c_str(), common_options);
 
 		if (!folder_path.empty()) {
 			std::vector<fs::path> image_paths;

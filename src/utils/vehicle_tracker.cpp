@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai vehicle tracker o nhanh utils de tuong thich voi code cu.
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "utils/vehicle_tracker.h"
 
 #include <algorithm>

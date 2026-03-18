@@ -1,3 +1,7 @@
+/*
+ * Mo ta file: Trien khai chuan hoa chuoi bien so sau OCR (loc ky tu, dinh dang).
+ * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ */
 #include "ocrplate/services/post_process_out_string.h"
 
 namespace post_process_out_string {
