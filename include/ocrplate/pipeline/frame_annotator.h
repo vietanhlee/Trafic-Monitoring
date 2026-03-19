@@ -54,8 +54,6 @@ struct TrackingRuntimeContext {
 
 	// Luu vet di chuyen theo track_id (tam bbox) de ve trace.
 	std::unordered_map<int, std::deque<cv::Point>> track_trace_points;
-	std::unordered_map<int, int> track_prev_line_side;
-	std::unordered_map<int, bool> track_crossed_gate;
 
 	TrackingRuntimeContext();
 };

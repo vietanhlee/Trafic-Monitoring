@@ -5,6 +5,7 @@
 #include "ocrplate/services/yolo_detector_internal.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -118,10 +119,6 @@ std::vector<std::vector<Detection>> ParseOutput(
 	const auto shape = type_info.GetShape();
 	const auto elem_type = type_info.GetElementType();
 
-	if (elem_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-		throw std::runtime_error("YOLO output type chua ho tro (chi ho tro float32)");
-	}
-
 	int64_t batch = 1;
 	int64_t dim1 = 0;
 	int64_t dim2 = 0;
@@ -141,7 +138,27 @@ std::vector<std::vector<Detection>> ParseOutput(
 		throw std::runtime_error("YOLO output batch != so anh input");
 	}
 
-	const float* data = out0.GetTensorData<float>();
+	std::vector<float> fp32_buffer;
+	const float* data = nullptr;
+	if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+		data = out0.GetTensorData<float>();
+	} else if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+		const auto* fp16 = out0.GetTensorData<Ort::Float16_t>();
+		size_t total_values = 1;
+		for (int64_t d : shape) {
+			if (d <= 0) {
+				throw std::runtime_error("YOLO output shape chua xac dinh duoc kich thuoc");
+			}
+			total_values *= static_cast<size_t>(d);
+		}
+		fp32_buffer.resize(total_values);
+		for (size_t i = 0; i < total_values; ++i) {
+			fp32_buffer[i] = static_cast<float>(fp16[i]);
+		}
+		data = fp32_buffer.data();
+	} else {
+		throw std::runtime_error("YOLO output type chua ho tro (chi ho tro float32/float16)");
+	}
 
 	// Standard YOLO: (batch, 4+num_classes, num_anchors)
 	//   dim1 nhỏ (vd: 6 cho 2 class), dim2 lớn (vd: 8400)

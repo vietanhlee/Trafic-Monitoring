@@ -140,6 +140,7 @@ std::vector<std::vector<Detection>> RunBatchNoSplit(
 	}
 
 	std::vector<float> input_f32;
+	std::vector<Ort::Float16_t> input_f16;
 	std::vector<uint8_t> input_u8;
 	Ort::Value input_tensor{nullptr};
 	if (spec.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
@@ -155,16 +156,29 @@ std::vector<std::vector<Detection>> RunBatchNoSplit(
 			input_f32.size(),
 			input_shape.data(),
 			input_shape.size());
+	} else if (spec.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+		// Model float16: preprocess theo float32, sau do convert sang fp16.
+		if (spec.nchw) {
+			FillTensorFromRGB_NCHW(rgbs, in_h, in_w, input_f32, /*scale_01=*/true);
+		} else {
+			FillTensorFromRGB_NHWC(rgbs, in_h, in_w, input_f32, /*scale_01=*/true);
+		}
+		input_f16.resize(input_f32.size());
+		for (size_t i = 0; i < input_f32.size(); ++i) {
+			input_f16[i] = Ort::Float16_t(input_f32[i]);
+		}
+		input_tensor = Ort::Value::CreateTensor<Ort::Float16_t>(
+			mem_info,
+			input_f16.data(),
+			input_f16.size(),
+			input_shape.data(),
+			input_shape.size());
 	} else if (spec.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
 		// Model uint8: giu nguyen dynamic range pixel, copy theo layout model can.
 		if (spec.nchw) {
 			FillTensorFromRGB_NCHW(rgbs, in_h, in_w, input_u8, /*scale_01=*/false);
 		} else {
-			const size_t per = static_cast<size_t>(in_h) * static_cast<size_t>(in_w) * 3ull;
-			input_u8.resize(static_cast<size_t>(batch) * per);
-			for (size_t i = 0; i < rgbs.size(); ++i) {
-				std::memcpy(input_u8.data() + i * per, rgbs[i].data, per);
-			}
+			FillTensorFromRGB_NHWC(rgbs, in_h, in_w, input_u8, /*scale_01=*/false);
 		}
 		input_tensor = Ort::Value::CreateTensor<uint8_t>(
 			mem_info,
@@ -173,7 +187,7 @@ std::vector<std::vector<Detection>> RunBatchNoSplit(
 			input_shape.data(),
 			input_shape.size());
 	} else {
-		throw std::runtime_error("YOLO input type chua ho tro (chi ho tro float32/uint8)");
+		throw std::runtime_error("YOLO input type chua ho tro (chi ho tro float32/float16/uint8)");
 	}
 
 	const std::vector<const char*> input_names = {io_names->input_name.c_str()};

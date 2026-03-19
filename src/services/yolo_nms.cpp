@@ -64,52 +64,6 @@ static inline bool ShouldSuppress(
 	// Them rang buoc containment de loai box long nhau qua nhieu.
 	return containment >= kContainmentSuppression;
 }
-
-static void NmsSingleClass(
-		const std::vector<Detection>& dets,
-		const std::vector<size_t>& indices,
-		const std::vector<float>& areas,
-		float iou_threshold,
-		std::vector<Detection>& kept) {
-	const size_t n = indices.size();
-	if (n == 0) return;
-
-	const size_t limit = std::min(n, kMaxNmsInput);
-	std::vector<bool> suppressed(limit, false);
-
-	for (size_t ii = 0; ii < limit; ++ii) {
-		if (suppressed[ii]) continue;
-		// Giu box score cao nhat chua bi suppress.
-		const size_t i = indices[ii];
-		kept.push_back(dets[i]);
-
-		const float ix1 = dets[i].x1;
-		const float iy1 = dets[i].y1;
-		const float ix2 = dets[i].x2;
-		const float iy2 = dets[i].y2;
-		const float area_i = areas[i];
-
-		for (size_t jj = ii + 1; jj < limit; ++jj) {
-			if (suppressed[jj]) continue;
-			const size_t j = indices[jj];
-			if (ShouldSuppress(
-					ix1,
-					iy1,
-					ix2,
-					iy2,
-					area_i,
-					dets[j].x1,
-					dets[j].y1,
-					dets[j].x2,
-					dets[j].y2,
-					areas[j],
-					iou_threshold)) {
-				suppressed[jj] = true;
-			}
-		}
-	}
-}
-
 std::vector<Detection> ApplyNMS(std::vector<Detection> dets, float iou_threshold) {
 	if (dets.size() <= 1) {
 		return dets;
@@ -146,6 +100,10 @@ std::vector<Detection> ApplyNMS(std::vector<Detection> dets, float iou_threshold
 		const float area_i = areas[i];
 		for (size_t j = i + 1; j < limit; ++j) {
 			if (suppressed[j]) continue;
+			if (dets[j].cls != dets[i].cls) {
+				// NMS theo class: khong suppress box cua lop khac.
+				continue;
+			}
 			if (ShouldSuppress(
 					ix1,
 					iy1,

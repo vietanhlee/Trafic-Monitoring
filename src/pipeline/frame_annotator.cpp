@@ -101,6 +101,13 @@ bool IsPointAboveGateLine(const cv::Point& p, const cv::Point& p1, const cv::Poi
 	return cross < 0;
 }
 
+cv::Point BottomLeftPointClamped(const yolo_detector::Detection& det, int w, int h) {
+	const float bx = det.x1;
+	const float by = std::max(det.y1, det.y2);
+	const int ix = std::max(0, std::min(static_cast<int>(std::lround(bx)), std::max(0, w - 1)));
+	const int iy = std::max(0, std::min(static_cast<int>(std::lround(by)), std::max(0, h - 1)));
+	return cv::Point(ix, iy);
+}
 
 // Ve bounding box bien so + nhan text OCR va do tin cay.
 void DrawPlate(cv::Mat& bgr, const yolo_detector::Detection& det, const std::string& text, float conf_avg) {
@@ -398,12 +405,15 @@ bool InferFrameOverlay(
 	std::vector<bool> allow_predict_by_line(vehicles_used.size(), true);
 	if (tracking_ctx != nullptr && tracking_ctx->enable_predict_on_line_cross) {
 		for (size_t i = 0; i < vehicles_used.size(); ++i) {
-			const auto& det = vehicles_used[i];
-			const cv::Point center(
-				static_cast<int>(std::lround((det.x1 + det.x2) * 0.5f)),
-				static_cast<int>(std::lround((det.y1 + det.y2) * 0.5f)));
+			const int track_id = track_ids[i];
+			if (track_id <= 0) {
+				allow_predict_by_line[i] = false;
+				continue;
+			}
+			const cv::Point bottom_left = BottomLeftPointClamped(vehicles_used[i], bgr.cols, bgr.rows);
+			// Chi check mot phia cua line: dung diem day-trai bbox o frame hien tai.
 			allow_predict_by_line[i] = IsPointAboveGateLine(
-				center,
+				bottom_left,
 				tracking_ctx->gate_line_p1,
 				tracking_ctx->gate_line_p2);
 		}
