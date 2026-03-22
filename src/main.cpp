@@ -1,6 +1,6 @@
 /*
- * Mo ta file: Entrypoint thay the/tuong thich cho che do chay truyen thong.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ * Mô tả file: Entrypoint thay thế/tương thích cho chế độ chạy truyền thống.
+ * Ghi chú: Comment tiếng Việt được bổ sung để dễ đọc và bảo trì.
  */
 #include <filesystem>
 #include <chrono>
@@ -30,6 +30,47 @@
 namespace fs = std::filesystem;
 static const fs::path kOutputDir = "../out/build/img_out";
 
+// Kieu dữ liệu luu vung ROI người dùng chon cho flow video legacy.
+// Nho nhất gom bbox bao ngoai + polygon + mask để suy giảm infer ngoai vung.
+struct WorkingArea {
+	// BBox bao ngoai ROI để cat view nhánh.
+	cv::Rect bbox;
+	// Polygon ROI trong he tọa độ frame goc.
+	std::vector<cv::Point> polygon_abs;
+	// Polygon ROI da doi sang he tọa độ local cua bbox.
+	std::vector<cv::Point> polygon_local;
+	// Mask nhi phan local (255 trong ROI).
+	cv::Mat mask_local;
+	// true nếu user chon polygon hop le.
+	bool enabled = false;
+};
+
+// Trang thai tam cho thao tac click chuot về polygon.
+struct PolygonPickerState {
+	// Tap diem user da click.
+	std::vector<cv::Point> points;
+	// Vi tri hover hiện tại để về preview doan line cuoi.
+	cv::Point hover{-1, -1};
+};
+
+// Cau hinh gate line dùng để trigger predict theo crossing.
+struct GateLineSelection {
+	// Diem dau line trong he tọa độ local ROI.
+	cv::Point p1_local{0, 0};
+	// Diem cuoi line trong he tọa độ local ROI.
+	cv::Point p2_local{0, 0};
+	// true nếu gate line được chon hop le.
+	bool enabled = false;
+};
+
+// Trang thai tam cho thao tac click chuot chon gate line.
+struct GateLinePickerState {
+	// Danh sach diem click (tối đa 2 diem).
+	std::vector<cv::Point> points;
+	// Vi tri hover chuot để về preview line.
+	cv::Point hover{-1, -1};
+};
+
 int ProcessOneImage(
 	const fs::path& image_path,
 	Ort::Session& vehicle_sess,
@@ -40,13 +81,13 @@ int ProcessOneImage(
 	bool show_output,
 	double* out_infer_ms = nullptr) {
 	if (!fs::exists(image_path)) {
-		std::cerr << "Khong tim thay anh: " << image_path.string() << "\n";
+		std::cerr << "Không tim thay anh: " << image_path.string() << "\n";
 		return 1;
 	}
 
 	cv::Mat bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
 	if (bgr.empty()) {
-		std::cerr << "Khong doc duoc anh: " << image_path.string() << "\n";
+		std::cerr << "Không đọc được anh: " << image_path.string() << "\n";
 		return 1;
 	}
 
@@ -70,11 +111,11 @@ int ProcessOneImage(
 	if (save_output) {
 		const fs::path out_path = kOutputDir / (image_path.stem().string() + "_annotated.jpg");
 		if (!cv::imwrite(out_path.string(), bgr)) {
-			throw std::runtime_error("Khong ghi duoc anh output: " + out_path.string());
+			throw std::runtime_error("Không ghi được anh output: " + out_path.string());
 		}
 		std::cout << "Da ghi output: " << out_path.string() << "\n";
 	} else {
-		std::cout << "--nosave: bo qua ghi file output cho anh nay\n";
+		std::cout << "--nosave: bỏ qua ghi file output cho anh nay\n";
 	}
 
 	if (show_output) {
@@ -82,7 +123,7 @@ int ProcessOneImage(
 		cv::namedWindow(window_name, cv::WINDOW_NORMAL);
 		cv::resizeWindow(window_name, 1200, 800);
 		cv::imshow(window_name, bgr);
-		std::cout << "Nhan phim bat ky de dong cua so hien thi...\n";
+		std::cout << "Nhan phim bật ky để dong cua so hiện thi...\n";
 		cv::waitKey(0);
 		cv::destroyWindow(window_name);
 	}
@@ -98,13 +139,13 @@ int ProcessOneVideo(
 	bool save_output,
 	bool show_output) {
 	if (!fs::exists(video_path)) {
-		std::cerr << "Khong tim thay video: " << video_path.string() << "\n";
+		std::cerr << "Không tim thay video: " << video_path.string() << "\n";
 		return 1;
 	}
 
 	cv::VideoCapture cap(video_path.string());
 	if (!cap.isOpened()) {
-		throw std::runtime_error("Khong mo duoc video: " + video_path.string());
+		throw std::runtime_error("Không mở được video: " + video_path.string());
 	}
 
 	std::cout << "=== Xu ly video: " << video_path.string() << " ===\n";
@@ -169,7 +210,7 @@ int ProcessOneVideo(
 
 	cv::Mat frame;
 	if (!cap.read(frame) || frame.empty()) {
-		throw std::runtime_error("Video khong co frame hop le: " + video_path.string());
+		throw std::runtime_error("Video không co frame hop le: " + video_path.string());
 	}
 
 	double input_fps = cap.get(cv::CAP_PROP_FPS);
@@ -194,7 +235,7 @@ int ProcessOneVideo(
 			input_fps,
 			cv::Size(frame.cols, frame.rows));
 		if (!writer.isOpened()) {
-			throw std::runtime_error("Khong mo duoc video writer: " + out_path.string());
+			throw std::runtime_error("Không mở được video writer: " + out_path.string());
 		}
 
 		writer_thread = std::thread([&]() {
@@ -238,7 +279,7 @@ int ProcessOneVideo(
 	const int infer_every_n = std::max(1, app_config::kVideoInferEveryNFrames);
 	while (true) {
 		if (stop_requested.load(std::memory_order_relaxed)) {
-			std::cout << "Dung som theo yeu cau nguoi dung (q/ESC)\n";
+			std::cout << "Dùng som theo yeu cau người dùng (q/ESC)\n";
 			break;
 		}
 
@@ -344,10 +385,10 @@ int ProcessOneVideo(
 	if (save_output) {
 		std::cout << "Da ghi output video: " << out_path.string() << " (" << frame_count << " frame)\n";
 		if (dropped_writer_frames > 0) {
-			std::cout << "(note) Bo qua " << dropped_writer_frames << " frame khi ghi de giu realtime\n";
+			std::cout << "(note) Bỏ qua " << dropped_writer_frames << " frame khi ghi để giu realtime\n";
 		}
 	} else {
-		std::cout << "--nosave: bo qua ghi file output video\n";
+		std::cout << "--nosave: bỏ qua ghi file output video\n";
 	}
 
 	if (infer_count > 0 && total_infer_sec > 0.0) {
@@ -388,29 +429,29 @@ int main(int argc, char** argv) {
 
 		if (image_path.empty() && folder_path.empty() && video_path.empty()) {
 			image_path = app_config::kDefaultImagePath;
-			std::cout << "(note) Khong truyen --image, dung anh mac dinh: " << image_path.string() << "\n";
+			std::cout << "(note) Không truyen --image, dùng anh mac định: " << image_path.string() << "\n";
 		}
 
 		if (!fs::exists(vehicle_model_path)) {
-			throw std::runtime_error("Khong tim thay model vehicle: " + vehicle_model_path.string());
+			throw std::runtime_error("Không tim thay model vehicle: " + vehicle_model_path.string());
 		}
 		if (!fs::exists(plate_model_path)) {
-			throw std::runtime_error("Khong tim thay model plate: " + plate_model_path.string());
+			throw std::runtime_error("Không tim thay model plate: " + plate_model_path.string());
 		}
 		if (!fs::exists(ocr_model_path)) {
-			throw std::runtime_error("Khong tim thay model ocr: " + ocr_model_path.string());
+			throw std::runtime_error("Không tim thay model ocr: " + ocr_model_path.string());
 		}
 		if (!fs::exists(brand_model_path)) {
-			throw std::runtime_error("Khong tim thay model brand car classification: " + brand_model_path.string());
+			throw std::runtime_error("Không tim thay model brand car classification: " + brand_model_path.string());
 		}
 		if (!folder_path.empty()) {
 			if (!fs::exists(folder_path) || !fs::is_directory(folder_path)) {
-				throw std::runtime_error("Thu muc khong hop le: " + folder_path.string());
+				throw std::runtime_error("Thư mục không hop le: " + folder_path.string());
 			}
 		}
 		if (!video_path.empty()) {
 			if (!fs::exists(video_path) || !fs::is_regular_file(video_path)) {
-				throw std::runtime_error("Video khong hop le: " + video_path.string());
+				throw std::runtime_error("Video không hop le: " + video_path.string());
 			}
 		}
 
@@ -447,7 +488,7 @@ int main(int argc, char** argv) {
 			}
 			std::sort(image_paths.begin(), image_paths.end());
 			if (image_paths.empty()) {
-				throw std::runtime_error("Khong tim thay file anh hop le trong thu muc: " + folder_path.string());
+				throw std::runtime_error("Không tim thay file anh hop le trong thư mục: " + folder_path.string());
 			}
 
 			int err_count = 0;

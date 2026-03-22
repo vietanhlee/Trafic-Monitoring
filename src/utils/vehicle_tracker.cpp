@@ -1,17 +1,8 @@
 /*
- * Mo ta file: Trien khai vehicle tracker o nhanh utils de tuong thich voi code cu.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ * Mô tả file: Triển khai vehicle tracker ở nhánh utils để tương thích với code cũ.
+ * Ghi chú: Comment tiếng Việt được bổ sung để dễ đọc và bảo trì.
  */
-#include "utils/vehicle_tracker.h"
 
-#include <algorithm>
-#include <cmath>
-#include <limits>
-#include <stdexcept>
-#include <utility>
-#include <vector>
-
-namespace vehicle_tracker {
 namespace {
 
 float IoU(const yolo_detector::Detection& a, const yolo_detector::Detection& b) {
@@ -153,7 +144,7 @@ std::vector<int> SolveAssignmentMinCost(const std::vector<std::vector<float>>& a
 				}
 			}
 			if (!std::isfinite(delta)) {
-				// No improving path; break to avoid NaNs. This can happen if all remaining costs are INF.
+				// No improving path; break to avoid NaNs. This cần happen if all remaining costs are INF.
 				break;
 			}
 			for (int j = 0; j <= m; ++j) {
@@ -204,7 +195,7 @@ AssignmentResult AssignTracksToDets(
 		out.unmatched_det_indices = det_indices;
 		return out;
 	}
-	// Add n dummy columns so every track can choose "unmatched" without stealing a real detection.
+	// Add n dummy columns so every track cần choose "unmatched" without stealing a real detection.
 	const size_t m = m_real + n;
 	// 1-indexed matrix a[n][m].
 	std::vector<std::vector<float>> a(n + 1, std::vector<float>(m + 1, 0.0f));
@@ -281,25 +272,25 @@ ByDetectionTracker::ByDetectionTracker(
 	  max_missed_frames_(max_missed_frames),
 	  min_confirmed_hits_(min_confirmed_hits) {
 	if (iou_threshold_ <= 0.0f || iou_threshold_ > 1.0f) {
-		throw std::runtime_error("Tracker IoU threshold khong hop le");
+		throw std::runtime_error("Tracker IoU threshold không hop le");
 	}
 	if (iou_threshold_low_ <= 0.0f) {
 		iou_threshold_low_ = std::min(0.20f, iou_threshold_);
 	}
 	if (iou_threshold_low_ <= 0.0f || iou_threshold_low_ > 1.0f) {
-		throw std::runtime_error("Tracker IoU low threshold khong hop le");
+		throw std::runtime_error("Tracker IoU low threshold không hop le");
 	}
 	if (max_missed_frames_ < 0) {
-		throw std::runtime_error("Tracker max missed frames khong hop le");
+		throw std::runtime_error("Tracker max missed frames không hop le");
 	}
 	if (min_confirmed_hits_ <= 0) {
-		throw std::runtime_error("Tracker min confirmed hits khong hop le");
+		throw std::runtime_error("Tracker min confirmed hits không hop le");
 	}
 	if (high_score_threshold_ < 0.0f || high_score_threshold_ > 1.0f) {
-		throw std::runtime_error("Tracker high score threshold khong hop le");
+		throw std::runtime_error("Tracker high score threshold không hop le");
 	}
 	if (low_score_threshold_ < 0.0f || low_score_threshold_ > 1.0f) {
-		throw std::runtime_error("Tracker low score threshold khong hop le");
+		throw std::runtime_error("Tracker low score threshold không hop le");
 	}
 	if (low_score_threshold_ > high_score_threshold_) {
 		// Allow but clamp to make ranges sensible.

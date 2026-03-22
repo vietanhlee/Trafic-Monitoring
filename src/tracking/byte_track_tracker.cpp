@@ -1,7 +1,8 @@
 /*
- * Mo ta file: Trien khai logic ByteTrack gan track-id va cap nhat trang thai track.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ * Mô tả file: Triển khai logic ByteTrack gán track-id và cập nhật trạng thái track.
+ * Ghi chú: Comment tiếng Việt được bổ sung để dễ đọc và bảo trì.
  */
+
 #include "ocrplate/tracking/byte_track_tracker.h"
 
 #include <algorithm>
@@ -14,7 +15,14 @@
 namespace vehicle_tracker {
 namespace {
 
-// Tinh IoU giua 2 bbox detection.
+// Hàm IoU: Tính toán Intersection over Union giữa hai bounding box.
+//
+// Tham số:
+// - a: Bounding box thứ nhất.
+// - b: Bounding box thứ hai.
+//
+// Trả về:
+// - Giá trị IoU trong khoảng [0, 1].
 float IoU(const yolo_detector::Detection& a, const yolo_detector::Detection& b) {
 	const float x1 = std::max(a.x1, b.x1);
 	const float y1 = std::max(a.y1, b.y1);
@@ -39,7 +47,7 @@ struct CenterSizeBox {
 	float h = 0.0f;
 };
 
-// Chuyen bbox (x1,y1,x2,y2) sang dang tam + kich thuoc.
+// Chuyển bbox (x1,y1,x2,y2) sang dạng tam + kích thước.
 CenterSizeBox ToCenterSize(const yolo_detector::Detection& d) {
 	CenterSizeBox b;
 	const float w = std::max(0.0f, d.x2 - d.x1);
@@ -51,7 +59,7 @@ CenterSizeBox ToCenterSize(const yolo_detector::Detection& d) {
 	return b;
 }
 
-// Chuyen nguoc tu tam + kich thuoc ve Detection.
+// Chuyển ngược từ tam + kích thước về Detection.
 yolo_detector::Detection FromCenterSize(const CenterSizeBox& b, float score, int cls) {
 	yolo_detector::Detection d;
 	const float w = std::max(1.0f, b.w);
@@ -65,7 +73,7 @@ yolo_detector::Detection FromCenterSize(const CenterSizeBox& b, float score, int
 	return d;
 }
 
-// Khoi tao state ban dau cho mot track moi tu detection dau tien.
+// Khởi tạo state ban đầu cho một track mới từ detection đầu tiên.
 void InitializeTrackState(TrackState& t, const yolo_detector::Detection& det) {
 	const CenterSizeBox b = ToCenterSize(det);
 	t.det = det;
@@ -81,12 +89,12 @@ void InitializeTrackState(TrackState& t, const yolo_detector::Detection& det) {
 	t.vh = 0.0f;
 }
 
-// Du doan vi tri track qua 1 frame dua tren van toc hien tai.
+// Dự đoán vị trí track qua 1 frame dựa trên vận tốc hiện tại.
 void PredictOneFrame(TrackState& t) {
 	if (!t.has_last_meas) {
 		return;
 	}
-	// Predict from the last measurement to avoid accumulating numerical drift.
+	// Dự đoán từ đo lường cuối cùng để tránh tích tụ sai số.
 	const float dt = static_cast<float>(std::max(0, t.frames_since_update));
 	CenterSizeBox pred;
 	pred.cx = t.last_meas_cx + t.vx * dt;
@@ -96,7 +104,7 @@ void PredictOneFrame(TrackState& t) {
 	t.det = FromCenterSize(pred, t.det.score, t.det.cls);
 }
 
-// Cap nhat track bang do do moi va lam muot van toc de giam rung.
+// Cập nhật track bằng đo lường mới và làm mượt vận tốc để giảm rung.
 void UpdateWithMeasurement(TrackState& t, const yolo_detector::Detection& meas) {
 	const CenterSizeBox b = ToCenterSize(meas);
 	if (t.has_last_meas) {
@@ -105,7 +113,7 @@ void UpdateWithMeasurement(TrackState& t, const yolo_detector::Detection& meas) 
 		const float new_vy = (b.cy - t.last_meas_cy) / dt;
 		const float new_vw = (b.w - t.last_meas_w) / dt;
 		const float new_vh = (b.h - t.last_meas_h) / dt;
-		// Smooth velocities a bit to reduce jitter.
+		// Làm mượt vận tốc một chút để giảm rung.
 		constexpr float kAlpha = 0.7f;
 		t.vx = t.vx * kAlpha + new_vx * (1.0f - kAlpha);
 		t.vy = t.vy * kAlpha + new_vy * (1.0f - kAlpha);
@@ -123,7 +131,7 @@ void UpdateWithMeasurement(TrackState& t, const yolo_detector::Detection& meas) 
 
 // Hungarian / assignment (min-cost) for rectangular matrix with n <= m.
 // 1-indexed internally.
-// Giai bai toan gan cap track-detection theo chi phi nho nhat.
+// Giải bài toán gan cap track-detection theo chi phí nhỏ nhất.
 std::vector<int> SolveAssignmentMinCost(const std::vector<std::vector<float>>& a) {
 	// a is 1..n, 1..m
 	const int n = static_cast<int>(a.size()) - 1;
@@ -160,7 +168,7 @@ std::vector<int> SolveAssignmentMinCost(const std::vector<std::vector<float>>& a
 				}
 			}
 			if (!std::isfinite(delta)) {
-				// No improving path; break to avoid NaNs. This can happen if all remaining costs are INF.
+				// No improving path; break to avoid NaNs. This cần happen if all remaining costs are INF.
 				break;
 			}
 			for (int j = 0; j <= m; ++j) {
@@ -212,7 +220,7 @@ AssignmentResult AssignTracksToDets(
 		out.unmatched_det_indices = det_indices;
 		return out;
 	}
-	// Add n dummy columns so every track can choose "unmatched" without stealing a real detection.
+	// Add n dummy columns so every track cần choose "unmatched" without stealing a real detection.
 	const size_t m = m_real + n;
 	// 1-indexed matrix a[n][m].
 	std::vector<std::vector<float>> a(n + 1, std::vector<float>(m + 1, 0.0f));
@@ -275,7 +283,7 @@ AssignmentResult AssignTracksToDets(
 
 } // namespace
 
-// Khoi tao ByteTrack voi nguong IoU/score va tham so vong doi track.
+// Khởi tạo ByteTrack với ngưỡng IoU/score và tham số vòng đời track.
 ByteTrackTracker::ByteTrackTracker(
 	float iou_threshold,
 	int max_missed_frames,
@@ -290,25 +298,25 @@ ByteTrackTracker::ByteTrackTracker(
 	  max_missed_frames_(max_missed_frames),
 	  min_confirmed_hits_(min_confirmed_hits) {
 	if (iou_threshold_ <= 0.0f || iou_threshold_ > 1.0f) {
-		throw std::runtime_error("Tracker IoU threshold khong hop le");
+		throw std::runtime_error("Tracker IoU threshold không hợp lệ");
 	}
 	if (iou_threshold_low_ <= 0.0f) {
 		iou_threshold_low_ = std::min(0.20f, iou_threshold_);
 	}
 	if (iou_threshold_low_ <= 0.0f || iou_threshold_low_ > 1.0f) {
-		throw std::runtime_error("Tracker IoU low threshold khong hop le");
+		throw std::runtime_error("Tracker IoU low threshold không hợp lệ");
 	}
 	if (max_missed_frames_ < 0) {
-		throw std::runtime_error("Tracker max missed frames khong hop le");
+		throw std::runtime_error("Tracker max missed frames không hợp lệ");
 	}
 	if (min_confirmed_hits_ <= 0) {
-		throw std::runtime_error("Tracker min confirmed hits khong hop le");
+		throw std::runtime_error("Tracker min confirmed hits không hợp lệ");
 	}
 	if (high_score_threshold_ < 0.0f || high_score_threshold_ > 1.0f) {
-		throw std::runtime_error("Tracker high score threshold khong hop le");
+		throw std::runtime_error("Tracker high score threshold không hợp lệ");
 	}
 	if (low_score_threshold_ < 0.0f || low_score_threshold_ > 1.0f) {
-		throw std::runtime_error("Tracker low score threshold khong hop le");
+		throw std::runtime_error("Tracker low score threshold không hợp lệ");
 	}
 	if (low_score_threshold_ > high_score_threshold_) {
 		// Allow but clamp to make ranges sensible.
@@ -316,17 +324,17 @@ ByteTrackTracker::ByteTrackTracker(
 	}
 }
 
-// Tien toi 1 frame thoi gian cho tat ca track (predict-only).
+// Tiến tới 1 frame thời gian cho tắt ca track (predict-only).
 void ByteTrackTracker::AdvanceFrame() {
 	++frame_index_;
 	for (auto& t : tracks_) {
-		// Tang khoang cach thoi gian tu lan update gan nhat, sau do predict vi tri moi.
+		// Tang khoang cach thời gian tu lan update gan nhất, sau đó predict vi tri moi.
 		t.frames_since_update += 1;
 		PredictOneFrame(t);
 	}
 }
 
-// Cap nhat tracker bang detection frame hien tai va tra ve track_id theo detection.
+// Cập nhật tracker bằng detection frame hiện tại và trả về track_id theo detection.
 std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detection>& detections) {
 	std::vector<int> track_ids(detections.size(), -1);
 	// Split detections by confidence (ByteTrack-style: high then low).
@@ -337,10 +345,10 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 	for (size_t i = 0; i < detections.size(); ++i) {
 		const float s = detections[i].score;
 		if (s >= high_score_threshold_) {
-			// Nhom tin cay cao: uu tien match o stage dau.
+			// Nhóm tin cay cao: ưu tiên match o stage đầu.
 			high_det_indices.push_back(i);
 		} else if (s >= low_score_threshold_) {
-			// Nhom tin cay thap: dung o stage cuu track da ton tai.
+			// Nhóm tin cay thấp: dùng o stage cuu track da ton tai.
 			low_det_indices.push_back(i);
 		}
 	}
@@ -375,7 +383,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 
 	auto mark_match = [&](size_t track_idx, size_t det_idx) {
 		TrackState& t = tracks_[track_idx];
-		// Match thanh cong: cap nhat trang thai va gan track_id cho detection.
+		// Match thanh cong: cập nhật trạng thái va gan track_id cho detection.
 		UpdateWithMeasurement(t, detections[det_idx]);
 		t.hit_count += 1;
 		t.missed_count = 0;
@@ -409,7 +417,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 		}
 	}
 	const float unconfirmed_iou_thr = std::min(0.80f, iou_threshold_ + 0.05f);
-	// Track chua confirm can IoU chat hon de tranh nhay ID som.
+	// Track chưa confirm cần IoU chat hon để tranh nhay ID som.
 	AssignmentResult stage1b = AssignTracksToDets(unconfirmed_tracks, high_remaining, tracks_, detections, unconfirmed_iou_thr);
 	for (const auto& m : stage1b.matches) {
 		const size_t track_idx = unconfirmed_tracks[m.first];
@@ -450,7 +458,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 			continue;
 		}
 		TrackState t;
-		// Track moi tao tu detection score cao se duoc uu tien giu lai.
+		// Track moi tao tu detection score cao se được uu tien giu lai.
 		t.track_id = next_track_id_++;
 		InitializeTrackState(t, detections[di]);
 		t.hit_count = 1;
@@ -462,28 +470,8 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 		det_taken[di] = true;
 	}
 
-	// Tao track moi cho cac detection low-score con lai.
-	// Muc tieu: object nao da duoc detect (>= low_score_threshold_) thi cung co ID ngay tu dau.
-	for (size_t di : low_det_indices) {
-		if (di >= detections.size() || det_taken[di]) {
-			continue;
-		}
-		// An toan: chi tao track neu score >= low_score_threshold_ (duoc define tu constructor).
-		if (detections[di].score < low_score_threshold_) {
-			continue;
-		}
-		TrackState t;
-		// Van tao track cho low-score de giu tinh lien tuc, se bi prune neu khong on dinh.
-		t.track_id = next_track_id_++;
-		InitializeTrackState(t, detections[di]);
-		t.hit_count = 1;
-		t.missed_count = 0;
-		t.is_confirmed = (t.hit_count >= min_confirmed_hits_);
-		tracks_.push_back(t);
-		track_updated.push_back(true);
-		track_ids[di] = t.track_id;
-		det_taken[di] = true;
-	}
+	// Không tao track moi tu low-score detection.
+	// ByteTrack goc chi khoi tao track tu nhom score cao để giảm ID churn.
 
 	// Mark missed tracks and prune.
 	for (size_t ti = 0; ti < tracks_.size(); ++ti) {
@@ -498,9 +486,10 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 			tracks_.begin(),
 			tracks_.end(),
 			[&](const TrackState& t) {
-				// Unconfirmed tracks are removed quickly to avoid ID churn.
+				// Cho unconfirmed track mot khoang grace nho để tranh mất ID do miss ngan han.
 				if (!t.is_confirmed) {
-					return t.missed_count >= 1;
+					const int unconfirmed_grace = std::max(2, max_missed_frames_ / 4);
+					return t.missed_count > unconfirmed_grace;
 				}
 				return t.missed_count > max_missed_frames_;
 			}),
@@ -509,7 +498,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 	return track_ids;
 }
 
-// Xoa toan bo trang thai tracker, quay ve ban dau.
+// Xóa toàn bộ trạng thái tracker, quay về ban đầu.
 void ByteTrackTracker::Reset() {
 	tracks_.clear();
 	next_track_id_ = 1;

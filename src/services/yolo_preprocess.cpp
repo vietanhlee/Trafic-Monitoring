@@ -1,6 +1,6 @@
-/*
- * Mo ta file: Trien khai letterbox/chuyen doi tensor input cho YOLO.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+/**
+ * @file yolo_preprocess.cpp
+ * @brief Triển khai đọc input spec, letterbox và đóng gói tensor input cho YOLO.
  */
 #include "ocrplate/services/yolo_detector_internal.h"
 
@@ -19,10 +19,17 @@ namespace detail {
 
 // ── Input spec (cached per session pointer) ───────────────────────────
 
+/**
+ * @brief Đọc input metadata của session YOLO và cache thread-local.
+ *
+ * @param session Session ONNX Runtime YOLO.
+ * @return InputSpec Cấu hình input tensor (type/layout/shape).
+ */
 InputSpec GetInputSpec(Ort::Session& session) {
-	// Cache: tránh gọi lại metadata mỗi lần infer
+	// Cache: tránh gọi lại metadata mỗi lần infer.
 	static thread_local std::uintptr_t cached_session_id = 0;
 	static thread_local InputSpec cached_spec;
+	// session_id là khóa cache theo địa chỉ session hiện tại.
 	const auto session_id = reinterpret_cast<std::uintptr_t>(&session);
 	if (session_id == cached_session_id) {
 		return cached_spec;
@@ -34,29 +41,30 @@ InputSpec GetInputSpec(Ort::Session& session) {
 	const auto elem_type = tensor_info.GetElementType();
 	const auto shape = tensor_info.GetShape();
 	if (shape.size() != 4) {
-		throw std::runtime_error("YOLO input rank khong hop le (can 4), rank=" + std::to_string(shape.size()));
+		throw std::runtime_error("YOLO input rank không hợp lệ (cần 4), rank=" + std::to_string(shape.size()));
 	}
 
 	InputSpec spec;
+	// type và n được đọc trực tiếp từ graph ONNX.
 	spec.type = elem_type;
 	spec.n = shape[0];
 
 	const bool dim1_is_c = (shape[1] == 3);
 	const bool dim3_is_c = (shape[3] == 3);
 	if (dim1_is_c && !dim3_is_c) {
-		// Dang NCHW: [N, C, H, W]
+		// Dạng NCHW: [N, C, H, W]
 		spec.nchw = true;
 		spec.c = 3;
 		spec.h = shape[2];
 		spec.w = shape[3];
 	} else if (dim3_is_c && !dim1_is_c) {
-		// Dang NHWC: [N, H, W, C]
+		// Dạng NHWC: [N, H, W, C]
 		spec.nchw = false;
 		spec.c = 3;
 		spec.h = shape[1];
 		spec.w = shape[2];
 	} else {
-		// Truong hop mo ho: fallback NCHW de giu tuong thich model cu.
+		// Trường hợp mở ho: fallback NCHW để giu tương thích model cu.
 		spec.nchw = true;
 		spec.c = (shape[1] > 0 ? shape[1] : 3);
 		spec.h = shape[2];
@@ -64,9 +72,10 @@ InputSpec GetInputSpec(Ort::Session& session) {
 	}
 
 	if (spec.c != 3) {
-		throw std::runtime_error("YOLO input khong ho tro so kenh != 3");
+		throw std::runtime_error("YOLO input không hỗ trợ so kenh != 3");
 	}
 	if (spec.h <= 0 || spec.w <= 0) {
+		// Fallback an toàn nếu shape dynamic/chưa xác định.
 		spec.h = 640;
 		spec.w = 640;
 	}
@@ -77,6 +86,15 @@ InputSpec GetInputSpec(Ort::Session& session) {
 
 // ── Letterbox ─────────────────────────────────────────────────────────
 
+/**
+ * @brief Resize + letterbox ảnh BGR về kích thước model và đổi sang RGB.
+ *
+ * @param bgr Ảnh đầu vào BGR.
+ * @param target_w Chiều rộng input model.
+ * @param target_h Chiều cao input model.
+ * @param info [out] Thong tin scale/pad để map bbox về ảnh gốc.
+ * @return cv::Mat Ảnh RGB đã letterbox.
+ */
 cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, LetterboxInfo& info) {
 	if (bgr.empty()) {
 		throw std::runtime_error("Anh rong");
@@ -88,11 +106,12 @@ cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, Lette
 
 	const float r = std::min(static_cast<float>(target_w) / static_cast<float>(info.orig_w),
 						static_cast<float>(target_h) / static_cast<float>(info.orig_h));
-	// scale dong nhat theo canh ngan hon de giu ty le hinh.
+	// scale dòng nhất theo canh ngan hon để giu ty le hinh.
 	info.scale = r;
 
 	const int new_w = static_cast<int>(std::round(info.orig_w * r));
 	const int new_h = static_cast<int>(std::round(info.orig_h * r));
+	// pad_x/pad_y la lech cần giua noi dùng that va vien letterbox.
 	info.pad_x = (target_w - new_w) / 2;
 	info.pad_y = (target_h - new_h) / 2;
 
@@ -113,10 +132,21 @@ cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, Lette
 
 // ── Tensor fill ───────────────────────────────────────────────────────
 
+/**
+ * @brief Dong gọi batch anh RGB vào tensor NCHW.
+ *
+ * @tparam T Kieu tensor dich (float hoặc uint8).
+ * @param rgbs_u8 Danh sach anh RGB da letterbox.
+ * @param h Chiều cao input tensor.
+ * @param w Chiều rộng input tensor.
+ * @param out [out] Buffer tensor NCHW.
+ * @param scale_01 true nếu cần scale [0,1].
+ */
 template <typename T>
 void FillTensorFromRGB_NCHW(const std::vector<cv::Mat>& rgbs_u8, int h, int w, std::vector<T>& out, bool scale_01) {
 	const size_t n = rgbs_u8.size();
 	const size_t plane = static_cast<size_t>(h) * static_cast<size_t>(w);
+	// out co tong kích thước N * C * H * W.
 	out.resize(n * 3ull * plane);
 	for (size_t i = 0; i < n; ++i) {
 		const size_t base = i * 3ull * plane;
@@ -142,9 +172,20 @@ void FillTensorFromRGB_NCHW(const std::vector<cv::Mat>& rgbs_u8, int h, int w, s
 	}
 }
 
+/**
+ * @brief Dong gọi batch anh RGB vào tensor NHWC.
+ *
+ * @tparam T Kieu tensor dich (float hoặc uint8).
+ * @param rgbs_u8 Danh sach anh RGB da letterbox.
+ * @param h Chiều cao input tensor.
+ * @param w Chiều rộng input tensor.
+ * @param out [out] Buffer tensor NHWC.
+ * @param scale_01 true nếu cần scale [0,1].
+ */
 template <typename T>
 void FillTensorFromRGB_NHWC(const std::vector<cv::Mat>& rgbs_u8, int h, int w, std::vector<T>& out, bool scale_01) {
 	const size_t n = rgbs_u8.size();
+	// out co tong kích thước N * H * W * C.
 	out.resize(n * static_cast<size_t>(h) * static_cast<size_t>(w) * 3ull);
 	for (size_t i = 0; i < n; ++i) {
 		const uint8_t* p = rgbs_u8[i].ptr<uint8_t>(0);

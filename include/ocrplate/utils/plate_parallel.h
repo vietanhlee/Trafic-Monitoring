@@ -1,6 +1,6 @@
 /*
- * Mo ta file: Tien ich song song hoa detect/crop/preprocess bien so tren nhieu xe.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ * Mô tả file: Tiện ích song song hóa detect/crop/preprocess biển số trên nhiều xe.
+ * Ghi chú: Comment tiếng Việt được bổ sung để dễ đọc và bảo trì.
  */
 #pragma once
 
@@ -14,28 +14,40 @@
 
 namespace plate_parallel {
 
-// Ung vien bien so sau khi map box tu output detector ve toa do trong crop xe.
+// Ứng viên biển số sau khi map box từ output detector về tọa độ trong crop xe.
 struct PlateCandidate {
+	// Chỉ số xe trong mảng vehicle_crops gốc.
 	size_t vehicle_index = 0;
+	// Detection biển số trong hệ tọa độ local của crop xe.
 	yolo_detector::Detection plate_in_vehicle;
+	// Rect đã được clamp và quy đổi sang cv::Rect để crop OCR.
 	cv::Rect plate_rect_in_vehicle;
 };
 
-// Detect bien so tren moi crop xe bang da luong (moi crop la 1 inference).
-// Thu tu output trung voi thu tu vehicle_crops.
+// Detect biển số trên mỗi crop xe bằng đa luồng.
+// Đầu vào:
+// - plate_sess: session model detect biển số.
+// - vehicle_crops: danh sách crop phương tiện.
+// - conf_threshold: ngưỡng score detect biển số.
+// - nms_iou_threshold: ngưỡng NMS cho branch plate.
+// Đầu ra:
+// - vector 2 chiều, mỗi phần tử là danh sách plate detections của từng xe.
+// - Thứ tự output giữ nguyên theo thứ tự vehicle_crops.
 std::vector<std::vector<yolo_detector::Detection>> DetectPlatesPerVehicleParallel(
 	Ort::Session& plate_sess,
 	const std::vector<cv::Mat>& vehicle_crops,
 	float conf_threshold,
 	float nms_iou_threshold);
 
-// Loc detection hop le va quy doi thanh danh sach candidate de OCR.
+// Lọc và quy đổi kết quả detect biển số thành danh sách candidate OCR.
+// Hàm sẽ bỏ qua box lỗi (âm kích thước, out of bound) và giữ lại candidate hợp lệ.
 std::vector<PlateCandidate> BuildPlateCandidatesParallel(
 	const std::vector<std::vector<yolo_detector::Detection>>& plates_per_vehicle,
 	const std::vector<cv::Mat>& vehicle_crops,
 	float min_plate_score);
 
-// Crop bien so va preprocess sang RGB uint8 HWC theo input OCR.
+// Crop biển số từ vehicle crops và preprocess về input OCR.
+// Đầu ra là danh sách ảnh RGB uint8 HWC kích thước cố định out_w x out_h.
 std::vector<cv::Mat> PreprocessPlatesParallel(
 	const std::vector<PlateCandidate>& candidates,
 	const std::vector<cv::Mat>& vehicle_crops,

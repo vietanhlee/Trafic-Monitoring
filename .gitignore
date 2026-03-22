@@ -21,3 +21,9 @@ main.py
 craw.py
 output_frames
 split_frame.py
+*.pt
+main.py
+example_infer_yolo_model.cpp
+best.pt
+best_vehicle.pt
+vscode

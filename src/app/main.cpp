@@ -1,6 +1,6 @@
 /*
- * Mo ta file: Entrypoint chinh: doc nguon vao, chay pipeline va xuat ket qua.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ * Mô tả file: Entrypoint chính: đọc nguồn vào, chạy pipeline và xuất kết quả.
+ * Ghi chú: Comment tiếng Việt được bổ sung để dễ đọc và bảo trì.
  */
 #include <filesystem>
 #include <chrono>
@@ -31,30 +31,42 @@ namespace fs = std::filesystem;
 static const fs::path kOutputDir = "../out/build/img_out";
 
 struct WorkingArea {
+	// BBox bao ngoài polygon ROI, dùng để cắt view nhánh trên frame.
 	cv::Rect bbox;
+	// Polygon ROI trong hệ tọa độ frame gốc.
 	std::vector<cv::Point> polygon_abs;
+	// Polygon ROI đã đổi sang hệ tọa độ local của bbox.
 	std::vector<cv::Point> polygon_local;
+	// Mask nhị phân local (255 trong ROI, 0 ngoài ROI).
 	cv::Mat mask_local;
+	// true nếu user có chọn polygon hợp lệ, false nếu fallback toàn frame.
 	bool enabled = false;
 };
 
 struct PolygonPickerState {
+	// Danh sách điểm polygon user đã click.
 	std::vector<cv::Point> points;
+	// Vị trí chuột hiện tại để về preview segment cuối.
 	cv::Point hover{-1, -1};
 };
 
 struct GateLineSelection {
+	// Diem dau gate line trong he tọa độ local ROI.
 	cv::Point p1_local{0, 0};
+	// Diem cuoi gate line trong he tọa độ local ROI.
 	cv::Point p2_local{0, 0};
+	// true nếu gate line được chon hop le.
 	bool enabled = false;
 };
 
 struct GateLinePickerState {
+	// Danh sach diem click khi user chon gate line (tối đa 2 diem).
 	std::vector<cv::Point> points;
+	// Vi tri hover cua chuot để về line preview.
 	cv::Point hover{-1, -1};
 };
 
-// Xu ly su kien chuot khi nguoi dung ve polygon vung lam viec.
+// Xu ly su kien chuot khi người dùng về polygon vung lam viec.
 void OnPolygonPickMouse(int event, int x, int y, int /*flags*/, void* userdata) {
 	auto* st = static_cast<PolygonPickerState*>(userdata);
 	if (st == nullptr) {
@@ -70,7 +82,7 @@ void OnPolygonPickMouse(int event, int x, int y, int /*flags*/, void* userdata) 
 	}
 }
 
-// Xu ly su kien chuot khi nguoi dung chon 2 diem tao duong ranh.
+// Xu ly su kien chuot khi người dùng chon 2 diem tao duong ranh.
 void OnGateLinePickMouse(int event, int x, int y, int /*flags*/, void* userdata) {
 	auto* st = static_cast<GateLinePickerState*>(userdata);
 	if (st == nullptr) {
@@ -86,11 +98,11 @@ void OnGateLinePickMouse(int event, int x, int y, int /*flags*/, void* userdata)
 	st->points.emplace_back(x, y);
 }
 
-// Tao WorkingArea tu da giac tuy chon; fallback toan frame neu polygon khong hop le.
+// Tao WorkingArea tu da giac tuy chon; fallback toan frame nếu polygon không hop le.
 WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::vector<cv::Point>& polygon_abs) {
 	WorkingArea area;
 	if (polygon_abs.size() < 3) {
-		// Polygon khong hop le -> coi nhu toan bo frame la vung xu ly.
+		// Polygon không hop le -> coi nhu toàn bộ frame la vung xu ly.
 		area.bbox = cv::Rect(0, 0, frame_size.width, frame_size.height);
 		area.polygon_abs = {
 			cv::Point(0, 0),
@@ -104,7 +116,7 @@ WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::v
 	}
 
 	cv::Rect raw = cv::boundingRect(polygon_abs);
-	// Clamp de dam bao bbox nam trong kich thuoc frame, tranh truy cap out-of-bound.
+	// Clamp để dam bao bbox nam trong kích thước frame, tranh truy cap out-of-bound.
 	const int x = std::max(0, std::min(raw.x, frame_size.width - 1));
 	const int y = std::max(0, std::min(raw.y, frame_size.height - 1));
 	const int w = std::max(1, std::min(raw.width, frame_size.width - x));
@@ -122,7 +134,7 @@ WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::v
 	return area;
 }
 
-// Hien giao dien de nguoi dung chon vung infer theo da giac.
+// Hiện giao dien để người dùng chon vung infer theo da giac.
 WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 	const std::string win = "Chon vung da giac tracking";
 	PolygonPickerState state;
@@ -134,7 +146,7 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 		cv::Mat canvas = first_frame.clone();
 
 		if (!state.points.empty()) {
-			// Ve preview da giac dang tao (fill + canh + diem neo) de nguoi dung quan sat.
+			// Vẽ preview da giac dạng tao (fill + canh + diem neo) để người dùng quan sát.
 			cv::Mat overlay = canvas.clone();
 			std::vector<std::vector<cv::Point>> poly_fill{state.points};
 			if (state.points.size() >= 3) {
@@ -153,15 +165,15 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 			}
 		}
 
-		const std::string tip1 = "Click trai: them diem | Click phai/u: xoa diem cuoi | c: xoa het";
-		const std::string tip2 = "Enter/Space: xac nhan da giac | Esc: bo qua (toan frame)";
+		const std::string tip1 = "Click trai: them diem | Click phai/u: xóa diem cuoi | c: xóa het";
+		const std::string tip2 = "Enter/Space: xac nhan da giac | Esc: bỏ qua (toan frame)";
 		cv::rectangle(canvas, cv::Rect(12, 12, std::max(780, first_frame.cols / 2), 56), cv::Scalar(0, 0, 0), cv::FILLED);
 		cv::putText(canvas, tip1, cv::Point(20, 34), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(240, 240, 240), 1, cv::LINE_AA);
 		cv::putText(canvas, tip2, cv::Point(20, 58), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(160, 255, 190), 1, cv::LINE_AA);
 
 		cv::imshow(win, canvas);
 		const int key = cv::waitKey(16);
-		// ESC: bo qua, C: clear, U: undo, Enter/Space: xac nhan polygon.
+		// ESC: bỏ qua, C: clear, U: undo, Enter/Space: xac nhan polygon.
 		if (key == 27) {
 			cv::destroyWindow(win);
 			return BuildWorkingAreaFromPolygon(first_frame.size(), {});
@@ -185,50 +197,62 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 	}
 }
 
-// Hien giao dien de nguoi dung chon 1 duong ranh (2 diem) de gate predict.
+// Hiện giao dien để người dùng chon 1 duong ranh (2 diem) để gate predict.
 GateLineSelection SelectGateLine(const cv::Mat& first_frame, const WorkingArea& area) {
+	// Tên cửa sổ hiển thị để chọn line.
 	const std::string win = "Chon duong ranh trigger predict";
 	GateLinePickerState state;
 
+	// Tạo cửa sổ và thiết lập callback chuột.
 	cv::namedWindow(win, cv::WINDOW_NORMAL);
 	cv::resizeWindow(win, 1280, 800);
 	cv::setMouseCallback(win, OnGateLinePickMouse, &state);
 
 	while (true) {
+		// Sao chép frame đầu tiên để vẽ các đối tượng lên.
 		cv::Mat canvas = first_frame.clone();
 		if (area.polygon_abs.size() >= 3) {
+			// Vẽ polygon ROI nếu có ít nhất 3 điểm.
 			std::vector<std::vector<cv::Point>> poly{area.polygon_abs};
 			cv::polylines(canvas, poly, true, cv::Scalar(120, 255, 170), 2, cv::LINE_AA);
 		}
 
+		// Vẽ các điểm mà người dùng đã click.
 		for (const auto& p : state.points) {
 			cv::circle(canvas, p, 4, cv::Scalar(0, 0, 0), cv::FILLED, cv::LINE_AA);
 			cv::circle(canvas, p, 3, cv::Scalar(255, 255, 255), cv::FILLED, cv::LINE_AA);
 		}
 		if (state.points.size() == 1 && state.hover.x >= 0 && state.hover.y >= 0) {
+			// Vẽ đường từ điểm đầu tiên đến vị trí chuột hiện tại.
 			cv::line(canvas, state.points[0], state.hover, cv::Scalar(90, 210, 255), 2, cv::LINE_AA);
 		}
 		if (state.points.size() == 2) {
+			// Vẽ đường nối giữa hai điểm đã chọn.
 			cv::line(canvas, state.points[0], state.points[1], cv::Scalar(90, 210, 255), 2, cv::LINE_AA);
 		}
 
-		const std::string tip1 = "Click trai: chon 2 diem line | c: xoa line";
-		const std::string tip2 = "Enter/Space: xac nhan | Esc: bo qua (predict nhu cu)";
+		// Hiển thị hướng dẫn sử dụng trên canvas.
+		const std::string tip1 = "Click trai: chon 2 diem line | c: xóa line";
+		const std::string tip2 = "Enter/Space: xac nhan | Esc: bỏ qua (predict nhu cu)";
 		cv::rectangle(canvas, cv::Rect(12, 12, std::max(760, first_frame.cols / 2), 56), cv::Scalar(0, 0, 0), cv::FILLED);
 		cv::putText(canvas, tip1, cv::Point(20, 34), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(240, 240, 240), 1, cv::LINE_AA);
 		cv::putText(canvas, tip2, cv::Point(20, 58), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(170, 235, 255), 1, cv::LINE_AA);
 
+		// Hiển thị canvas và xử lý các phím nhấn.
 		cv::imshow(win, canvas);
 		const int key = cv::waitKey(16);
 		if (key == 27) {
+			// Nhấn Esc để thoát và không chọn line.
 			cv::destroyWindow(win);
 			return GateLineSelection{};
 		}
 		if (key == 'c' || key == 'C') {
+			// Nhấn 'c' để xóa các điểm đã chọn.
 			state.points.clear();
 			continue;
 		}
 		if (key == 13 || key == 10 || key == 32) {
+			// Nhấn Enter hoặc Space để xác nhận line.
 			if (state.points.size() == 2 && state.points[0] != state.points[1]) {
 				GateLineSelection out;
 				out.p1_local = cv::Point(state.points[0].x - area.bbox.x, state.points[0].y - area.bbox.y);
@@ -241,7 +265,7 @@ GateLineSelection SelectGateLine(const cv::Mat& first_frame, const WorkingArea& 
 	}
 }
 
-// Ve lop phu (overlay) cho vung lam viec de nguoi dung nhin ro ROI dang xu ly.
+// Vẽ lop phu (overlay) cho vung lam viec để người dùng nhin ro ROI dạng xu ly.
 void DrawWorkingAreaOverlay(cv::Mat& frame, const WorkingArea& area) {
 	if (!area.enabled || area.polygon_abs.size() < 3) {
 		return;
@@ -251,7 +275,7 @@ void DrawWorkingAreaOverlay(cv::Mat& frame, const WorkingArea& area) {
 	cv::fillPoly(overlay, poly, cv::Scalar(50, 190, 80), cv::LINE_AA);
 	cv::addWeighted(overlay, 0.10, frame, 0.90, 0.0, frame);
 
-	// Vien ngoai dam + vien trong sang de de nhin tren nen phuc tap.
+	// Vien ngoai dam + vien trong sang để để nhin tren nen phuc tap.
 	cv::polylines(frame, poly, true, cv::Scalar(0, 0, 0), 3, cv::LINE_AA);
 	cv::polylines(frame, poly, true, cv::Scalar(120, 255, 170), 2, cv::LINE_AA);
 
@@ -261,20 +285,33 @@ void DrawWorkingAreaOverlay(cv::Mat& frame, const WorkingArea& area) {
 	cv::putText(frame, lbl, anchor, cv::FONT_HERSHEY_SIMPLEX, 0.58, cv::Scalar(160, 255, 190), 1, cv::LINE_AA);
 }
 
+// Hàm DrawGateLineOverlay: Vẽ overlay cho đường ranh (gate line) trên frame.
+//
+// Tham số:
+// - frame: Frame hiện tại để vẽ overlay.
+// - area: Vùng làm việc (WorkingArea) chứa thông tin về ROI.
+// - gate_line: Thông tin về đường ranh được chọn (nếu có).
 void DrawGateLineOverlay(cv::Mat& frame, const WorkingArea& area, const GateLineSelection& gate_line) {
 	if (!gate_line.enabled) {
+		// Nếu đường ranh không được kích hoạt, thoát hàm.
 		return;
 	}
+
+	// Tính toán tọa độ tuyệt đối của hai điểm trên đường ranh.
 	const cv::Point p1(gate_line.p1_local.x + area.bbox.x, gate_line.p1_local.y + area.bbox.y);
 	const cv::Point p2(gate_line.p2_local.x + area.bbox.x, gate_line.p2_local.y + area.bbox.y);
+
+	// Vẽ đường ranh với hai lớp: lớp ngoài đậm và lớp trong sáng.
 	cv::line(frame, p1, p2, cv::Scalar(90, 210, 255), 3, cv::LINE_AA);
 	cv::line(frame, p1, p2, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+
+	// Vẽ nhãn "PREDICT GATE LINE" tại vị trí gần đường ranh.
 	const cv::Point anchor(std::max(8, std::min(p1.x, p2.x)), std::max(20, std::min(p1.y, p2.y) - 8));
 	cv::rectangle(frame, cv::Rect(anchor.x, anchor.y - 16, 146, 22), cv::Scalar(0, 0, 0), cv::FILLED);
 	cv::putText(frame, "PREDICT GATE LINE", cv::Point(anchor.x + 4, anchor.y), cv::FONT_HERSHEY_SIMPLEX, 0.48, cv::Scalar(170, 235, 255), 1, cv::LINE_AA);
 }
 
-// Xu ly 1 anh don: infer, annotate, luu/hien thi ket qua va tra ve ma trang thai.
+// Xu ly 1 anh don: infer, annotate, luu/hiện thi kết quả va tra về ma trang thai.
 int ProcessOneImage(
 	const fs::path& image_path,
 	Ort::Session& vehicle_sess,
@@ -285,13 +322,13 @@ int ProcessOneImage(
 	bool show_output,
 	double* out_infer_ms = nullptr) {
 	if (!fs::exists(image_path)) {
-		std::cerr << "Khong tim thay anh: " << image_path.string() << "\n";
+		std::cerr << "Không tim thay anh: " << image_path.string() << "\n";
 		return 1;
 	}
 
 	cv::Mat bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
 	if (bgr.empty()) {
-		std::cerr << "Khong doc duoc anh: " << image_path.string() << "\n";
+		std::cerr << "Không đọc được anh: " << image_path.string() << "\n";
 		return 1;
 	}
 
@@ -315,11 +352,11 @@ int ProcessOneImage(
 	if (save_output) {
 		const fs::path out_path = kOutputDir / (image_path.stem().string() + "_annotated.jpg");
 		if (!cv::imwrite(out_path.string(), bgr)) {
-			throw std::runtime_error("Khong ghi duoc anh output: " + out_path.string());
+			throw std::runtime_error("Không ghi được anh output: " + out_path.string());
 		}
 		std::cout << "Da ghi output: " << out_path.string() << "\n";
 	} else {
-		std::cout << "--nosave: bo qua ghi file output cho anh nay\n";
+		std::cout << "--nosave: bỏ qua ghi file output cho anh nay\n";
 	}
 
 	if (show_output) {
@@ -327,14 +364,14 @@ int ProcessOneImage(
 		cv::namedWindow(window_name, cv::WINDOW_NORMAL);
 		cv::resizeWindow(window_name, 1200, 800);
 		cv::imshow(window_name, bgr);
-		std::cout << "Nhan phim bat ky de dong cua so hien thi...\n";
+		std::cout << "Nhan phim bật ky để dong cua so hiện thi...\n";
 		cv::waitKey(0);
 		cv::destroyWindow(window_name);
 	}
 	return 0;
 }
 
-// Xu ly 1 video: infer theo chu ky frame, tracking lien tuc va xuat video annotate.
+// Xu ly 1 video: infer theo chu ky frame, tracking liên tục va xuat video annotate.
 int ProcessOneVideo(
 	const fs::path& video_path,
 	Ort::Session& vehicle_sess,
@@ -344,13 +381,13 @@ int ProcessOneVideo(
 	bool save_output,
 	bool show_output) {
 	if (!fs::exists(video_path)) {
-		std::cerr << "Khong tim thay video: " << video_path.string() << "\n";
+		std::cerr << "Không tim thay video: " << video_path.string() << "\n";
 		return 1;
 	}
 
 	cv::VideoCapture cap(video_path.string());
 	if (!cap.isOpened()) {
-		throw std::runtime_error("Khong mo duoc video: " + video_path.string());
+		throw std::runtime_error("Không mở được video: " + video_path.string());
 	}
 
 	std::cout << "=== Xu ly video: " << video_path.string() << " ===\n";
@@ -360,15 +397,17 @@ int ProcessOneVideo(
 	const std::string window_name = "OCR Plate - Video Output";
 	std::atomic<bool> stop_requested{ false };
 
+	// Các biến đồng bộ cho luồng hiển thị preview realtime.
 	std::mutex display_mutex;
 	std::condition_variable display_cv;
 	std::deque<cv::Mat> display_queue;
 	std::thread display_thread;
+	// Gioi han so frame cho queue preview để tranh tang do tre hiện thi.
 	const size_t max_display_queue = static_cast<size_t>(std::max(1, app_config::kVideoDisplayQueueSize));
 
 	auto MakeDisplayFrame = [](const cv::Mat& src) {
 		const int max_w = std::max(1, app_config::kVideoPreviewMaxWidth);
-		// Chi resize khi can de giam chi phi copy/scale tren frame nho.
+		// Chi resize khi cần để giảm chi phí copy/scale tren frame nho.
 		if (src.cols <= max_w) {
 			return src.clone();
 		}
@@ -380,10 +419,10 @@ int ProcessOneVideo(
 
 	cv::Mat frame;
 	if (!cap.read(frame) || frame.empty()) {
-		throw std::runtime_error("Video khong co frame hop le: " + video_path.string());
+		throw std::runtime_error("Video không co frame hop le: " + video_path.string());
 	}
 
-	// Chon vung da giac lam viec ngay tu dau, sau do chi infer/draw trong vung nay.
+	// Chon vung da giac lam viec ngay tu dau, sau đó chi infer/draw trong vung nay.
 	const WorkingArea work_area = SelectWorkingPolygon(frame);
 	std::cout << "Vung xu ly: x=" << work_area.bbox.x
 		<< " y=" << work_area.bbox.y
@@ -394,9 +433,9 @@ int ProcessOneVideo(
 	const GateLineSelection gate_line = SelectGateLine(frame, work_area);
 	if (gate_line.enabled) {
 		std::cout << "Predict gate line: p1=(" << gate_line.p1_local.x << "," << gate_line.p1_local.y
-			<< ") p2=(" << gate_line.p2_local.x << "," << gate_line.p2_local.y << ") [toa do trong ROI]\n";
+			<< ") p2=(" << gate_line.p2_local.x << "," << gate_line.p2_local.y << ") [tọa độ trong ROI]\n";
 	} else {
-		std::cout << "Predict gate line: tat (xu ly nhu cu)\n";
+		std::cout << "Predict gate line: tắt (xu ly nhu cu)\n";
 	}
 
 	if (show_output) {
@@ -408,7 +447,7 @@ int ProcessOneVideo(
 				cv::Mat frame_to_show;
 				{
 					std::unique_lock<std::mutex> lock(display_mutex);
-					// Display thread ngu den khi co frame moi hoac co lenh dung.
+					// Display thread ngu den khi co frame moi hoặc co lenh dùng.
 					display_cv.wait(lock, [&]() {
 						return stop_requested.load(std::memory_order_relaxed) || !display_queue.empty();
 					});
@@ -419,7 +458,7 @@ int ProcessOneVideo(
 						continue;
 					}
 					frame_to_show = std::move(display_queue.back());
-					// Chi giu frame moi nhat de uu tien realtime thay vi hien frame cu.
+					// Chi giu frame moi nhất để uu tien realtime thay vi hiện frame cu.
 					display_queue.clear();
 				}
 
@@ -439,9 +478,11 @@ int ProcessOneVideo(
 
 	double input_fps = cap.get(cv::CAP_PROP_FPS);
 	if (input_fps <= 0.0) {
+		// Fallback cho video không co metadata FPS hop le.
 		input_fps = 30.0;
 	}
 
+	// Các biến đồng bộ cho luồng ghi video output.
 	fs::path out_path;
 	cv::VideoWriter writer;
 	std::mutex writer_mutex;
@@ -449,7 +490,9 @@ int ProcessOneVideo(
 	std::deque<cv::Mat> writer_queue;
 	std::thread writer_thread;
 	std::atomic<bool> writer_stop{ false };
+	// Hang doi writer co gioi han để tranh phinh bộ nhớ khi infer cham.
 	constexpr size_t kMaxWriterQueue = 8;
+	// Dem so frame bị bỏ qua khi uu tien realtime.
 	size_t dropped_writer_frames = 0;
 	if (save_output) {
 		out_path = kOutputDir / (video_path.stem().string() + "_annotated.mp4");
@@ -459,7 +502,7 @@ int ProcessOneVideo(
 			input_fps,
 			cv::Size(frame.cols, frame.rows));
 		if (!writer.isOpened()) {
-			throw std::runtime_error("Khong mo duoc video writer: " + out_path.string());
+			throw std::runtime_error("Không mở được video writer: " + out_path.string());
 		}
 
 		writer_thread = std::thread([&]() {
@@ -468,7 +511,7 @@ int ProcessOneVideo(
 				bool popped = false;
 				{
 					std::unique_lock<std::mutex> lock(writer_mutex);
-					// Writer thread ngu den khi co frame can ghi hoac nhan tin hieu ket thuc.
+					// Writer thread ngu den khi co frame cần ghi hoặc nhan tin hieu ket thuc.
 					writer_cv.wait(lock, [&]() {
 						return writer_stop.load(std::memory_order_relaxed) || !writer_queue.empty();
 					});
@@ -485,21 +528,25 @@ int ProcessOneVideo(
 				if (popped) {
 					writer_cv.notify_one();
 				}
-				// Ghi I/O tach rieng thread de khong chan vong infer.
+				// Ghi I/O tach rieng thread để không chan vong infer.
 				writer.write(frame_to_write);
 			}
 		});
 	}
 
 	size_t frame_count = 0;
+	// Tong thời gian infer thuan (không tinh render/IO) để thống kê cuoi video.
 	double total_infer_sec = 0.0;
+	// So lan infer thuc te da chạy.
 	size_t infer_count = 0;
+	// FPS EMA để hiện thi on định hon FPS tuc thoi.
 	double fps_ema = 0.0;
 	constexpr double kFpsEmaAlpha = 0.15;
 	// Timestamp đầu vòng lặp của lần infer gần nhất (để tính interval giữa 2 infer)
 	auto prev_infer_loop_start = std::chrono::steady_clock::now();
 	bool has_prev_infer = false;
 	FrameOverlayResult cached_overlay;
+	// Co overlay hop le để tai su dùng cho cac frame skip infer hay không.
 	bool has_cached_overlay = false;
 	TrackingRuntimeContext tracking_ctx;
 	tracking_ctx.enable_predict_on_line_cross = gate_line.enabled;
@@ -508,7 +555,7 @@ int ProcessOneVideo(
 	const int infer_every_n = std::max(1, app_config::kVideoInferEveryNFrames);
 	while (true) {
 		if (stop_requested.load(std::memory_order_relaxed)) {
-			std::cout << "Dung som theo yeu cau nguoi dung (q/ESC)\n";
+			std::cout << "Dùng som theo yeu cau người dùng (q/ESC)\n";
 			break;
 		}
 
@@ -535,18 +582,21 @@ int ProcessOneVideo(
 			prev_infer_loop_start = loop_start;
 			has_prev_infer = true;
 
+			// Moc bật dau infer cua frame nay (chi tinh phan infer).
 			auto infer_t0 = std::chrono::steady_clock::now();
 			try {
+				// work_view la view ROI theo bbox, không copy dữ liệu goc.
 				cv::Mat work_view = frame(work_area.bbox);
+				// infer_input la anh đầu vào thuc te cua pipeline (co/không ap mask polygon).
 				cv::Mat infer_input;
 				if (work_area.enabled) {
-					// Neu co polygon: mask ROI de model chi nhin vung quan tam.
+					// Nếu co polygon: mask ROI để model chi nhin vung quan tam.
 					work_view.copyTo(infer_input);
 					cv::Mat masked;
 					cv::bitwise_and(infer_input, infer_input, masked, work_area.mask_local);
 					infer_input = std::move(masked);
 				} else {
-					// Khong co polygon: infer truc tiep tren ROI toan frame/bbox.
+					// Không co polygon: infer truc tiep tren ROI toan frame/bbox.
 					infer_input = work_view;
 				}
 				has_cached_overlay = InferFrameOverlay(
@@ -558,6 +608,7 @@ int ProcessOneVideo(
 					cached_overlay,
 					false,
 					&tracking_ctx);
+				// Moc ket thuc infer để cong don thống kê thời gian.
 				auto infer_t1 = std::chrono::steady_clock::now();
 				total_infer_sec += std::chrono::duration<double>(infer_t1 - infer_t0).count();
 				++infer_count;
@@ -575,15 +626,16 @@ int ProcessOneVideo(
 
 		DrawFps(frame, display_fps);
 		if (save_output) {
+			// Clone để writer thread so huu ban rieng, tranh data race voi frame hiện tại.
 			cv::Mat writer_frame = frame.clone();
 			{
 				std::unique_lock<std::mutex> lock(writer_mutex);
 				if (show_output && writer_queue.size() >= kMaxWriterQueue) {
-					// Uu tien realtime: bo frame cu neu queue day khi dang show.
+					// Uu tien realtime: bo frame cu nếu queue day khi dạng show.
 					writer_queue.pop_front();
 					++dropped_writer_frames;
 				} else {
-					// Che do khong show: cho queue rong bot de han che mat frame.
+					// Chế độ không show: cho queue rong bot để han che mất frame.
 					while (writer_queue.size() >= kMaxWriterQueue && !stop_requested.load(std::memory_order_relaxed)) {
 						writer_cv.wait_for(lock, std::chrono::milliseconds(2));
 					}
@@ -593,11 +645,12 @@ int ProcessOneVideo(
 			writer_cv.notify_one();
 		}
 		if (show_output) {
+			// Tao frame preview da scale để giảm tai GUI thread.
 			cv::Mat display_frame = MakeDisplayFrame(frame);
 			{
 				std::lock_guard<std::mutex> lock(display_mutex);
 				display_queue.emplace_back(std::move(display_frame));
-				// Chan queue display phinh to: luon cat frame cu nhat khi vuot nguong.
+				// Chan queue display phinh to: luôn cat frame cu nhất khi vuot ngưỡng.
 				while (display_queue.size() > max_display_queue) {
 					display_queue.pop_front();
 				}
@@ -632,10 +685,10 @@ int ProcessOneVideo(
 	if (save_output) {
 		std::cout << "Da ghi output video: " << out_path.string() << " (" << frame_count << " frame)\n";
 		if (dropped_writer_frames > 0) {
-			std::cout << "(note) Bo qua " << dropped_writer_frames << " frame khi ghi de giu realtime\n";
+			std::cout << "(note) Bỏ qua " << dropped_writer_frames << " frame khi ghi để giu realtime\n";
 		}
 	} else {
-		std::cout << "--nosave: bo qua ghi file output video\n";
+		std::cout << "--nosave: bỏ qua ghi file output video\n";
 	}
 
 	if (infer_count > 0 && total_infer_sec > 0.0) {
@@ -646,16 +699,19 @@ int ProcessOneVideo(
 	return 0;
 }
 
-// Diem vao chuong trinh: parse CLI, nap model, chon mode image/folder/video va thuc thi.
+// Diem vào chuong trinh: parse CLI, nap model, chon mode image/folder/video va thuc thi.
 int main(int argc, char** argv) {
 	try {
+		// Đường dẫn model được lấy tập trung tu app_config.
 		const fs::path vehicle_model_path = app_config::kVehicleModelPath;
 		const fs::path plate_model_path = app_config::kPlateModelPath;
 		const fs::path brand_model_path = app_config::kBrandCarModelPath;
 		const fs::path ocr_model_path = app_config::kOcrModelPath;
+		// Cac bien mode input se được parse tu CLI.
 		fs::path image_path;
 		fs::path folder_path;
 		fs::path video_path;
+		// Co luu output va co hiện preview hay không.
 		bool save_output = true;
 		bool show_output = false;
 		try {
@@ -677,38 +733,40 @@ int main(int argc, char** argv) {
 
 		if (image_path.empty() && folder_path.empty() && video_path.empty()) {
 			image_path = app_config::kDefaultImagePath;
-			std::cout << "(note) Khong truyen --image, dung anh mac dinh: " << image_path.string() << "\n";
+			std::cout << "(note) Không truyen --image, dùng anh mac định: " << image_path.string() << "\n";
 		}
 
 		if (!fs::exists(vehicle_model_path)) {
-			throw std::runtime_error("Khong tim thay model vehicle: " + vehicle_model_path.string());
+			throw std::runtime_error("Không tim thay model vehicle: " + vehicle_model_path.string());
 		}
 		if (!fs::exists(plate_model_path)) {
-			throw std::runtime_error("Khong tim thay model plate: " + plate_model_path.string());
+			throw std::runtime_error("Không tim thay model plate: " + plate_model_path.string());
 		}
 		if (!fs::exists(ocr_model_path)) {
-			throw std::runtime_error("Khong tim thay model ocr: " + ocr_model_path.string());
+			throw std::runtime_error("Không tim thay model ocr: " + ocr_model_path.string());
 		}
 		if (!fs::exists(brand_model_path)) {
-			throw std::runtime_error("Khong tim thay model brand car classification: " + brand_model_path.string());
+			throw std::runtime_error("Không tim thay model brand car classification: " + brand_model_path.string());
 		}
 		if (!folder_path.empty()) {
 			if (!fs::exists(folder_path) || !fs::is_directory(folder_path)) {
-				throw std::runtime_error("Thu muc khong hop le: " + folder_path.string());
+				throw std::runtime_error("Thư mục không hop le: " + folder_path.string());
 			}
 		}
 		if (!video_path.empty()) {
 			if (!fs::exists(video_path) || !fs::is_regular_file(video_path)) {
-				throw std::runtime_error("Video khong hop le: " + video_path.string());
+				throw std::runtime_error("Video không hop le: " + video_path.string());
 			}
 		}
 
 		Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "main");
+		// Common options cho vehicle/ocr/brand model: cho phep intra-op cao hon.
 		Ort::SessionOptions common_options;
 		common_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 		common_options.SetIntraOpNumThreads(4);
 		common_options.SetInterOpNumThreads(1);
 
+		// Plate model chạy nhiều luong o tang ngoai, nen để intra-op = 1 tranh oversubscription.
 		Ort::SessionOptions plate_options;
 		plate_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 		plate_options.SetIntraOpNumThreads(1);
@@ -736,7 +794,7 @@ int main(int argc, char** argv) {
 			}
 			std::sort(image_paths.begin(), image_paths.end());
 			if (image_paths.empty()) {
-				throw std::runtime_error("Khong tim thay file anh hop le trong thu muc: " + folder_path.string());
+				throw std::runtime_error("Không tim thay file anh hop le trong thư mục: " + folder_path.string());
 			}
 
 			int err_count = 0;

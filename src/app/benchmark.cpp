@@ -1,6 +1,6 @@
 /*
- * Mo ta file: Chuong trinh benchmark tung stage cua pipeline OCR bien so.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ * Mô tả file: Chương trình benchmark từng stage của pipeline OCR biển số.
+ * Ghi chú: Comment tiếng Việt được bổ sung để dễ đọc và bảo trì.
  */
 #include <algorithm>
 #include <chrono>
@@ -29,19 +29,27 @@ namespace fs = std::filesystem;
 namespace {
 
 struct BenchmarkOptions {
+	// Anh đầu vào dùng để do benchmark toan pipeline.
 	fs::path image_path = app_config::kDefaultImagePath;
+	// So lan warmup trước khi tinh thống kê để on định cache/runtime.
 	int warmup_runs = 3;
+	// So lan chạy do thuc te để lấy trung binh.
 	int bench_runs = 10;
 };
 
 struct StageMetrics {
 	// Vehicle branch
+	// Thời gian detect vehicle tren frame.
 	double vehicle_detect_ms = 0.0;
+	// Thời gian cat crop vehicle sau detect.
 	double vehicle_crop_ms = 0.0;
 	// Brand branch
+	// Tong thời gian nhánh brand (gom classify + overhead nhánh).
 	double brand_branch_ms = 0.0;
+	// Thời gian classify brand thuần.
 	double brand_classify_ms = 0.0;
 	// Plate branch
+	// Tong thời gian nhánh plate (detect/map/crop/ocr).
 	double plate_branch_ms = 0.0;
 	double plate_detect_ms = 0.0;
 	double plate_map_ms = 0.0;
@@ -57,9 +65,13 @@ struct StageMetrics {
 };
 
 struct PlateBranchResult {
+	// OCR text theo tung plate candidate.
 	std::vector<ocr_batch::OcrText> texts;
+	// BBox plate da map về he tọa độ frame goc.
 	std::vector<yolo_detector::Detection> plate_boxes_in_image;
+	// Co plate hay không theo tung vehicle index.
 	std::vector<bool> vehicle_has_plate;
+	// Co it nhất mot plate hop le trong frame benchmark hay không.
 	bool has_any_plate = false;
 	double branch_ms = 0.0;
 	double plate_detect_ms = 0.0;
@@ -69,27 +81,31 @@ struct PlateBranchResult {
 };
 
 struct BrandBranchResult {
+	// Kết quả classify brand theo danh sach car crop đầu vào.
 	std::vector<brand_classifier::BrandResult> brand_results;
+	// Tong thời gian nhánh brand.
 	double branch_ms = 0.0;
+	// Thời gian infer classify thuần.
 	double classify_ms = 0.0;
 };
 
-// Chuan hoa bbox ve mien anh hop le de crop an toan.
+// Chuan hoa bbox về mien anh hop le để crop an toan.
 cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h);
 
-// In huong dan su dung benchmark.
+// In huong dần su dùng benchmark.
 void PrintUsage(const char* prog) {
 	std::cout
 		<< "Usage: " << prog << " [--image <path>] [--warmup <N>] [--runs <N>]\n"
-		<< "  --image   : Duong dan 1 anh can benchmark (mac dinh tu app_config::kDefaultImagePath)\n"
-		<< "  --warmup  : So lan warm-up truoc khi do (mac dinh 3)\n"
-		<< "  --runs    : So lan do benchmark (mac dinh 10)\n";
+		<< "  --image   : Đường dẫn 1 anh cần benchmark (mac định tu app_config::kDefaultImagePath)\n"
+		<< "  --warmup  : So lan warm-up trước khi do (mac định 3)\n"
+		<< "  --runs    : So lan do benchmark (mac định 10)\n";
 }
 
-// Parse tham so benchmark (--image, --warmup, --runs).
+// Parse tham số benchmark (--image, --warmup, --runs).
 BenchmarkOptions ParseArgs(int argc, char** argv) {
 	BenchmarkOptions opt;
 	for (int i = 1; i < argc; ++i) {
+		// arg la token CLI hiện tại dạng xu ly.
 		const std::string arg = argv[i];
 		if (arg == "--help" || arg == "-h") {
 			PrintUsage(argv[0]);
@@ -116,7 +132,7 @@ BenchmarkOptions ParseArgs(int argc, char** argv) {
 			opt.bench_runs = std::stoi(argv[++i]);
 			continue;
 		}
-		throw std::runtime_error("Tham so khong hop le: " + arg);
+		throw std::runtime_error("Tham số không hop le: " + arg);
 	}
 
 	if (opt.warmup_runs < 0) {
@@ -139,12 +155,12 @@ cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
 	return cv::Rect(ix1, iy1, rw, rh);
 }
 
-// Tinh thoi gian mili-giay giua 2 moc thoi gian.
+// Tinh thời gian mili-giay giua 2 moc thời gian.
 double ElapsedMs(const std::chrono::steady_clock::time_point& t0, const std::chrono::steady_clock::time_point& t1) {
 	return std::chrono::duration<double, std::milli>(t1 - t0).count();
 }
 
-// Chay 1 lan pipeline va thu thap metric chi tiet theo tung stage.
+// Chạy 1 lan pipeline va thu thấp metric chi tiet theo tung stage.
 StageMetrics RunPipelineOnce(
 	const cv::Mat& bgr,
 	Ort::Session& vehicle_sess,
@@ -179,7 +195,7 @@ StageMetrics RunPipelineOnce(
 			continue;
 		}
 		vehicle_rects.push_back(r);
-		// Dung ROI view de benchmark tap trung vao infer thay vi copy bo nho.
+		// Dùng ROI view để benchmark tập trung vào infer thay vi copy bộ nhớ.
 		vehicle_crops.push_back(bgr(r));
 		vehicles_used.push_back(v);
 	}
@@ -268,7 +284,7 @@ StageMetrics RunPipelineOnce(
 
 		std::vector<cv::Mat> plate_rgb_ocr;
 		if (candidates.size() < 4) {
-			// Workload nho: chay tuan tu de tranh overhead tao future/thread.
+			// Workload nho: chạy tuần tự để tranh overhead tao future/thread.
 			auto mapped_out = map_work();
 			pr.plate_boxes_in_image = std::move(std::get<0>(mapped_out));
 			pr.vehicle_has_plate = std::move(std::get<1>(mapped_out));
@@ -359,10 +375,10 @@ StageMetrics RunPipelineOnce(
 	return m;
 }
 
-// Kiem tra anh dau vao va duong dan model truoc khi benchmark.
+// Kiểm tra anh đầu vào va đường dẫn model trước khi benchmark.
 void ValidateInputPaths(const BenchmarkOptions& opt) {
 	if (!fs::exists(opt.image_path) || !fs::is_regular_file(opt.image_path)) {
-		throw std::runtime_error("Anh khong hop le: " + opt.image_path.string());
+		throw std::runtime_error("Anh không hop le: " + opt.image_path.string());
 	}
 
 	const fs::path vehicle_model_path = app_config::kVehicleModelPath;
@@ -371,22 +387,22 @@ void ValidateInputPaths(const BenchmarkOptions& opt) {
 	const fs::path ocr_model_path = app_config::kOcrModelPath;
 
 	if (!fs::exists(vehicle_model_path)) {
-		throw std::runtime_error("Khong tim thay model vehicle: " + vehicle_model_path.string());
+		throw std::runtime_error("Không tim thay model vehicle: " + vehicle_model_path.string());
 	}
 	if (!fs::exists(plate_model_path)) {
-		throw std::runtime_error("Khong tim thay model plate: " + plate_model_path.string());
+		throw std::runtime_error("Không tim thay model plate: " + plate_model_path.string());
 	}
 	if (!fs::exists(ocr_model_path)) {
-		throw std::runtime_error("Khong tim thay model ocr: " + ocr_model_path.string());
+		throw std::runtime_error("Không tim thay model ocr: " + ocr_model_path.string());
 	}
 	if (!fs::exists(brand_model_path)) {
-		throw std::runtime_error("Khong tim thay model brand car classification: " + brand_model_path.string());
+		throw std::runtime_error("Không tim thay model brand car classification: " + brand_model_path.string());
 	}
 }
 
 } // namespace
 
-// Entrypoint benchmark: warmup, do nhieu lan va in thong ke trung binh.
+// Entrypoint benchmark: warmup, do nhiều lan va in thống kê trung binh.
 int main(int argc, char** argv) {
 	try {
 		const BenchmarkOptions opt = ParseArgs(argc, argv);
@@ -394,7 +410,7 @@ int main(int argc, char** argv) {
 
 		cv::Mat bgr = cv::imread(opt.image_path.string(), cv::IMREAD_COLOR);
 		if (bgr.empty()) {
-			throw std::runtime_error("Khong doc duoc anh: " + opt.image_path.string());
+			throw std::runtime_error("Không đọc được anh: " + opt.image_path.string());
 		}
 
 		std::cout << "=== Benchmark 1 anh ===\n";
@@ -419,14 +435,14 @@ int main(int argc, char** argv) {
 		Ort::Session brand_sess(env, app_config::kBrandCarModelPath, common_options);
 
 		for (int i = 0; i < opt.warmup_runs; ++i) {
-			// Warm-up de ONNX/OpenCV on dinh cache va tranh do sai run dau.
+			// Warm-up để ONNX/OpenCV on định cache va tranh do sai run dau.
 			(void)RunPipelineOnce(bgr, vehicle_sess, plate_sess, ocr_sess, brand_sess);
 		}
 
 		std::vector<StageMetrics> runs;
 		runs.reserve(static_cast<size_t>(opt.bench_runs));
 		for (int i = 0; i < opt.bench_runs; ++i) {
-			// Moi run thu metric doc lap de tinh trung binh cuoi cung.
+			// Moi run thu metric đọc lap để tinh trung binh cuoi cung.
 			runs.push_back(RunPipelineOnce(bgr, vehicle_sess, plate_sess, ocr_sess, brand_sess));
 		}
 
@@ -448,7 +464,7 @@ int main(int argc, char** argv) {
 		std::cout << "\n=== Per-run (ms) ===\n";
 		for (size_t i = 0; i < runs.size(); ++i) {
 			const auto& r = runs[i];
-			// Cong don tung stage de tong hop average latency/FPS.
+			// Cong don tung stage để tong hop average độ trễ/FPS.
 			sum_vehicle += r.vehicle_detect_ms;
 			sum_vehicle_crop += r.vehicle_crop_ms;
 			sum_brand_branch += r.brand_branch_ms;
@@ -509,7 +525,7 @@ int main(int argc, char** argv) {
 		std::cout << "merge          : " << avg_merge << "\n";
 		std::cout << "total pipeline : " << avg_total << "\n";
 		if (avg_total > 0.0) {
-			// FPS infer-only = 1000ms / tong latency trung binh moi frame.
+			// FPS infer-only = 1000ms / tong độ trễ trung binh moi frame.
 			std::cout << "avg fps (infer only): " << (1000.0 / avg_total) << "\n";
 		}
 		std::cout << "avg vehicles used  : " << (sum_vehicles / denom) << "\n";

@@ -1,6 +1,6 @@
 /*
- * Mo ta file: Trien khai ve duong di track len khung hinh de quan sat hanh vi.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ * Mô tả file: Triển khai vẽ đường đi track lên khung hình để quan sát hành vi.
+ * Ghi chú: Comment tiếng Việt được bổ sung để dễ đọc và bảo trì.
  */
 #include "ocrplate/pipeline/track_trace.h"
 

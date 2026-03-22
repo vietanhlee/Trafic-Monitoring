@@ -1,6 +1,6 @@
-/*
- * Mo ta file: Trien khai preprocess/infer/postprocess cho model nhan dien hang xe.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+/**
+ * @file brand_classifier.cpp
+ * @brief Triển khai preprocess, infer và decode kết quả classifier hãng xe.
  */
 #include "ocrplate/services/brand_classifier.h"
 
@@ -20,16 +20,28 @@
 namespace brand_classifier {
 namespace {
 
+/**
+ * @brief Cap ten input/output cua session classifier.
+ */
 struct BrandSessionIoName {
+	// Ten input node trong graph classifier.
 	std::string input_name;
+	// Ten output node trong graph classifier.
 	std::string output_name;
 };
 
+/**
+ * @brief Lấy metadata ten input/output cua session va cache theo session pointer.
+ *
+ * @param session Session ONNX Runtime cua model classifier.
+ * @return std::shared_ptr<const BrandSessionIoName> Metadata ten node I/O.
+ */
 std::shared_ptr<const BrandSessionIoName> GetSessionIoName(Ort::Session& session) {
 	static std::mutex cache_mu;
 	static std::unordered_map<std::uintptr_t, std::shared_ptr<const BrandSessionIoName>> cache;
 
 	const auto key = reinterpret_cast<std::uintptr_t>(&session);
+	// Fast-path cache hit: tra metadata ngay, không truy van ONNX graph nua.
 	{
 		std::lock_guard<std::mutex> lk(cache_mu);
 		auto it = cache.find(key);
@@ -39,14 +51,17 @@ std::shared_ptr<const BrandSessionIoName> GetSessionIoName(Ort::Session& session
 	}
 
 	Ort::AllocatorWithDefaultOptions allocator;
-	// Cache ten input/output theo session de tranh truy van metadata lap lai.
+	// built là metadata tạm cho session hiện tại trước khi chèn vào cache.
 	auto built = std::make_shared<BrandSessionIoName>();
+	// Tên input/output trả về từ ONNX Runtime cần copy sang std::string
+	// để không phụ thuộc vòng đời của AllocatedStringPtr.
 	auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
 	built->input_name = input_name_alloc.get();
 	auto output_name_alloc = session.GetOutputNameAllocated(0, allocator);
 	built->output_name = output_name_alloc.get();
 
 	{
+		// Chèn metadata vào cache; nếu thread khác đã chèn trước thì dùng bản có sẵn.
 		std::lock_guard<std::mutex> lk(cache_mu);
 		auto [it, inserted] = cache.emplace(key, built);
 		if (!inserted) {
@@ -56,16 +71,24 @@ std::shared_ptr<const BrandSessionIoName> GetSessionIoName(Ort::Session& session
 	return built;
 }
 
+/**
+ * @brief Preprocess ảnh BGR thành tensor float32 NCHW.
+ *
+ * @param bgr Anh đầu vào BGR.
+ * @param input_h Chiều cao model yeu cau.
+ * @param input_w Chiều rộng model yeu cau.
+ * @param out [out] Buffer tensor NCHW float32.
+ */
 void PrepareInputNchwFloat(const cv::Mat& bgr, int input_h, int input_w, std::vector<float>& out) {
 	if (bgr.empty()) {
-		throw std::runtime_error("Anh dau vao phan loai rong");
+		throw std::runtime_error("Ảnh đầu vào phân loại rỗng");
 	}
 	if (bgr.channels() != 3) {
-		throw std::runtime_error("Anh dau vao phan loai can 3 kenh");
+		throw std::runtime_error("Ảnh đầu vào phân loại cần 3 kênh");
 	}
 
 	cv::Mat rgb;
-	// Model brand dung RGB + tensor NCHW float32 trong mien [0,1].
+	// Model brand dùng RGB + tensor NCHW float32 trong mien [0,1].
 	cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
 	cv::Mat resized;
 	cv::resize(rgb, resized, cv::Size(input_w, input_h), 0.0, 0.0, cv::INTER_LINEAR);
@@ -78,10 +101,11 @@ void PrepareInputNchwFloat(const cv::Mat& bgr, int input_h, int input_w, std::ve
 
 	out.resize(3ull * static_cast<size_t>(input_h) * static_cast<size_t>(input_w));
 	const uint8_t* p = resized.ptr<uint8_t>(0);
+	// plane = so phan tu cua mot kenh trong tensor NCHW.
 	const size_t plane = static_cast<size_t>(input_h) * static_cast<size_t>(input_w);
 	for (int y = 0; y < input_h; ++y) {
 		for (int x = 0; x < input_w; ++x) {
-			// Chuyen HWC -> NCHW de khop input model.
+			// Chuyen HWC -> NCHW để khớp input model.
 			const size_t idx_hwc = (static_cast<size_t>(y) * static_cast<size_t>(input_w) + static_cast<size_t>(x)) * 3ull;
 			const size_t pos = static_cast<size_t>(y) * static_cast<size_t>(input_w) + static_cast<size_t>(x);
 			out[0 * plane + pos] = static_cast<float>(p[idx_hwc + 0]) / 255.0f;
@@ -91,16 +115,23 @@ void PrepareInputNchwFloat(const cv::Mat& bgr, int input_h, int input_w, std::ve
 	}
 }
 
+/**
+ * @brief Decode top-1 class và confidence từ một vector điểm số class.
+ *
+ * @param data Con tro den row score/logit theo class.
+ * @param class_count So luong class.
+ * @return BrandResult Kết quả top-1.
+ */
 BrandResult DecodeTop1(const float* data, int64_t class_count) {
 	if (class_count <= 0) {
-		throw std::runtime_error("So class output khong hop le");
+		throw std::runtime_error("Số class output không hợp lệ");
 	}
 	int best_idx = 0;
 	float best_val = data[0];
 	bool all_prob = (data[0] >= 0.0f && data[0] <= 1.0f);
 	double sum_row = static_cast<double>(data[0]);
 	for (int64_t i = 1; i < class_count; ++i) {
-		// Lay chi so co score lon nhat (argmax).
+		// Lấy chỉ số co score lon nhất (argmax).
 		const float v = data[i];
 		if (v > best_val) {
 			best_val = v;
@@ -111,14 +142,14 @@ BrandResult DecodeTop1(const float* data, int64_t class_count) {
 	}
 
 	float conf = 0.0f;
-	// Ho tro 2 kieu output pho bien:
-	// 1) da la probability (tong ~1), 2) logit -> tinh softmax top-1 conf.
+	// Hỗ trợ 2 kiểu output phổ biến:
+	// 1) đã là probability (tổng ~1), 2) logit -> tính softmax top-1 conf.
 	const bool looks_like_prob = all_prob && (std::abs(sum_row - 1.0) <= 1e-2);
 	if (looks_like_prob) {
-		// Output da la probability -> lay truc tiep best_val.
+		// Output đã là probability -> lấy trực tiếp best_val.
 		conf = best_val;
 	} else {
-		// Output la logits -> uoc luong conf top-1 bang softmax on-the-fly.
+		// Output là logits -> ước lượng conf top-1 bằng softmax on-the-fly.
 		double sum_exp = 0.0;
 		for (int64_t i = 0; i < class_count; ++i) {
 			sum_exp += std::exp(static_cast<double>(data[i] - best_val));
@@ -127,6 +158,7 @@ BrandResult DecodeTop1(const float* data, int64_t class_count) {
 	}
 
 	BrandResult r;
+	// class_id va conf da la kết quả top-1 sau decode.
 	r.class_id = best_idx;
 	r.conf = conf;
 	return r;
@@ -134,6 +166,15 @@ BrandResult DecodeTop1(const float* data, int64_t class_count) {
 
 } // namespace
 
+/**
+ * @brief Phan loai thường hieu theo batch anh.
+ *
+ * @param session Session ONNX Runtime classifier.
+ * @param bgr_images Danh sach anh crop BGR.
+ * @param input_h Chiều cao input model.
+ * @param input_w Chiều rộng input model.
+ * @return std::vector<BrandResult> Kết quả top-1 theo thứ tự đầu vào.
+ */
 std::vector<BrandResult> ClassifyBatch(
 	Ort::Session& session,
 	const std::vector<cv::Mat>& bgr_images,
@@ -144,12 +185,13 @@ std::vector<BrandResult> ClassifyBatch(
 	}
 
 	const size_t total_images = bgr_images.size();
+	// io_name la metadata ten node input/output, được cache theo session.
 	const auto io_name = GetSessionIoName(session);
 
 	std::vector<std::vector<float>> prepared_inputs;
 	prepared_inputs.resize(total_images);
 	if (total_images == 1) {
-		// Fast-path cho 1 anh de tranh over-threading.
+		// Fast-path cho 1 anh để tranh over-threading.
 		PrepareInputNchwFloat(bgr_images[0], input_h, input_w, prepared_inputs[0]);
 	} else {
 		const unsigned int hw_threads = std::thread::hardware_concurrency();
@@ -166,6 +208,7 @@ std::vector<BrandResult> ClassifyBatch(
 			prep_workers.emplace_back([&]() {
 				try {
 					while (true) {
+						// idx: anh tiep theo se được preprocess boi worker hiện tại.
 						const size_t idx = prep_next_index.fetch_add(1);
 						if (idx >= total_images) {
 							break;
@@ -191,6 +234,7 @@ std::vector<BrandResult> ClassifyBatch(
 	}
 
 	auto infer_one = [&](size_t idx) -> BrandResult {
+		// Shape input classifier bật buoc la [1,3,H,W] trong flow hiện tại.
 		const std::vector<int64_t> tensor_shape = {1, 3, input_h, input_w};
 		Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 		Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
@@ -213,25 +257,27 @@ std::vector<BrandResult> ClassifyBatch(
 
 		Ort::Value& out0 = outputs.at(0);
 		if (!out0.IsTensor()) {
-			throw std::runtime_error("Output brand khong phai tensor");
+			throw std::runtime_error("Output brand không phai tensor");
 		}
 		const auto out_info = out0.GetTensorTypeAndShapeInfo();
 		if (out_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-			throw std::runtime_error("Output brand can float32");
+			throw std::runtime_error("Output brand cần float32");
 		}
 
 		const auto out_shape = out_info.GetShape();
 		const float* data = out0.GetTensorData<float>();
 		if (out_shape.size() == 1) {
+			// Rank-1: [C]
 			return DecodeTop1(data, out_shape[0]);
 		}
 		if (out_shape.size() == 2) {
+			// Rank-2: [N,C], o day N phai >= 1.
 			if (out_shape[0] < 1) {
-				throw std::runtime_error("Output brand batch khong hop le");
+				throw std::runtime_error("Output brand batch không hop le");
 			}
 			return DecodeTop1(data, out_shape[1]);
 		}
-		throw std::runtime_error("Output brand rank khong hop le (can 1 hoac 2)");
+		throw std::runtime_error("Output brand rank không hop le (cần 1 hoặc 2)");
 	};
 
 	std::vector<BrandResult> results(total_images);
@@ -254,7 +300,7 @@ std::vector<BrandResult> ClassifyBatch(
 		workers.emplace_back([&]() {
 			try {
 				while (true) {
-					// Dynamic scheduling giup can bang khi moi infer co do tre khac nhau.
+					// Dynamic scheduling giup cần bang khi moi infer co do tre khac nhau.
 					const size_t idx = next_index.fetch_add(1);
 					if (idx >= total_images) {
 						break;
@@ -281,6 +327,15 @@ std::vector<BrandResult> ClassifyBatch(
 	return results;
 }
 
+/**
+ * @brief Wrapper classify cho mot anh don.
+ *
+ * @param session Session ONNX Runtime classifier.
+ * @param bgr_image Anh BGR đầu vào.
+ * @param input_h Chiều cao input model.
+ * @param input_w Chiều rộng input model.
+ * @return BrandResult Kết quả top-1 cho anh đầu vào.
+ */
 BrandResult ClassifySingle(
 	Ort::Session& session,
 	const cv::Mat& bgr_image,
@@ -288,7 +343,7 @@ BrandResult ClassifySingle(
 	int input_w) {
 	auto v = ClassifyBatch(session, {bgr_image}, input_h, input_w);
 	if (v.empty()) {
-		throw std::runtime_error("ClassifySingle khong nhan duoc ket qua");
+		throw std::runtime_error("ClassifySingle không nhan được kết quả");
 	}
 	return v.front();
 }

@@ -1,6 +1,9 @@
-/*
- * Mo ta file: Giao dien classify hang xe tren crop phuong tien.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+/**
+ * @file brand_classifier.h
+ * @brief Khai báo API phân loại thương hiệu xe trên crop phương tiện.
+ *
+ * Module này nhận ảnh crop phương tiện (BGR OpenCV), preprocess về input model,
+ * infer classifier ONNX và trả về class + confidence.
  */
 #pragma once
 
@@ -11,21 +14,53 @@
 
 namespace brand_classifier {
 
+/**
+ * @brief Kết quả phân loại thương hiệu cho một ảnh.
+ */
 struct BrandResult {
+	/**
+	 * @brief Chỉ số lớp dự đoán top-1 (argmax).
+	 *
+	 * Giá trị -1 nghĩa là không có kết quả hợp lệ.
+	 */
 	int class_id = -1;
+	/**
+	 * @brief Độ tin cậy của lớp class_id.
+	 *
+	 * Miền giá trị kỳ vọng: [0, 1].
+	 */
 	float conf = 0.0f;
 };
 
-// Chạy phân loại hãng xe cho 1 ảnh BGR crop phương tiện.
-// Model kỳ vọng input float32 NCHW với kích thước (3,224,224) hoặc (1,3,224,224).
+/**
+	 * @brief Phân loại thương hiệu cho một crop phương tiện.
+	 *
+	 * @param session Session ONNX Runtime của model classifier.
+	 * @param bgr_image Ảnh BGR của crop phương tiện (OpenCV).
+ * @param input_h Chiều cao input model.
+ * @param input_w Chiều rộng input model.
+	 * @return BrandResult Kết quả top-1 gồm class_id và confidence.
+	 *
+	 * @note Hàm tự preprocess ảnh về tensor float32 NCHW.
+ */
 BrandResult ClassifySingle(
 	Ort::Session& session,
 	const cv::Mat& bgr_image,
 	int input_h,
 	int input_w);
 
-// Chạy phân loại hãng xe theo batch ảnh BGR crop phương tiện.
-// Model kỳ vọng input float32 NCHW: (N,3,H,W).
+
+/**
+	 * @brief Phân loại thương hiệu theo batch.
+	 *
+	 * @param session Session ONNX Runtime của model classifier.
+	 * @param bgr_images Danh sách ảnh crop BGR.
+ * @param input_h Chiều cao input model.
+ * @param input_w Chiều rộng input model.
+	 * @return std::vector<BrandResult> Danh sách kết quả top-1 theo thứ tự đầu vào.
+	 *
+	 * @note Input tensor model kỳ vọng float32 NCHW shape (N,3,H,W).
+ */
 std::vector<BrandResult> ClassifyBatch(
 	Ort::Session& session,
 	const std::vector<cv::Mat>& bgr_images,

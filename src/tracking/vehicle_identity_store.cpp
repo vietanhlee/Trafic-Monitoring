@@ -1,6 +1,6 @@
 /*
- * Mo ta file: Trien khai bo nho danh tinh xe: hop nhat plate/brand theo track.
- * Ghi chu: Comment tieng Viet duoc bo sung de de doc va bao tri.
+ * Mô tả file: Triển khai bộ nhớ danh tính xe: hợp nhất plate/brand theo track.
+ * Ghi chú: Comment tiếng Việt được bổ sung để dễ đọc và bảo trì.
  */
 #include "ocrplate/tracking/vehicle_identity_store.h"
 
@@ -12,7 +12,7 @@ namespace vehicle_identity_store {
 namespace {
 
 bool HasUnderscoreOnlyAtEnd(const std::string& plate_text) {
-	// Chap nhan chuoi co '_' chi o cuoi (padding), khong chap nhan '_' xen giua.
+	// Chap nhan chuoi co '_' chi o cuoi (padding), không chap nhan '_' xen giua.
 	const size_t first_underscore = plate_text.find('_');
 	if (first_underscore == std::string::npos) {
 		return true;
@@ -26,7 +26,7 @@ bool HasUnderscoreOnlyAtEnd(const std::string& plate_text) {
 }
 
 std::string TrimTrailingUnderscore(std::string plate_text) {
-	// Bo ky tu padding o cuoi de lay text bien so thuc.
+	// Bo ký tự padding o cuoi để lấy text bịển số thuc.
 	while (!plate_text.empty() && plate_text.back() == '_') {
 		plate_text.pop_back();
 	}
@@ -55,28 +55,28 @@ VehicleIdentityStore::VehicleIdentityStore(
 	  plate_min_length_(plate_min_length),
 	  plate_max_length_(plate_max_length) {
 	if (brand_accept_threshold_ <= 0.0f || brand_accept_threshold_ > 1.0f) {
-		throw std::runtime_error("Nguong brand accept khong hop le");
+		throw std::runtime_error("Ngưỡng brand accept không hop le");
 	}
 	if (brand_max_attempts_ <= 0) {
-		throw std::runtime_error("So lan predict brand toi da khong hop le");
+		throw std::runtime_error("So lan predict brand tối đa không hop le");
 	}
 	if (plate_ocr_accept_threshold_ <= 0.0f || plate_ocr_accept_threshold_ > 1.0f) {
-		throw std::runtime_error("Nguong plate ocr accept khong hop le");
+		throw std::runtime_error("Ngưỡng plate ocr accept không hop le");
 	}
 	if (plate_max_detect_attempts_ <= 0) {
-		throw std::runtime_error("So lan detect plate toi da khong hop le");
+		throw std::runtime_error("So lan detect plate tối đa không hop le");
 	}
 	if (plate_max_ocr_attempts_ <= 0) {
-		throw std::runtime_error("So lan OCR plate toi da khong hop le");
+		throw std::runtime_error("So lan OCR plate tối đa không hop le");
 	}
 	if (plate_unknown_text_.empty()) {
-		throw std::runtime_error("Gia tri plate unknown khong duoc rong");
+		throw std::runtime_error("Gia tri plate unknown không được rong");
 	}
 	if (plate_no_plate_text_.empty()) {
-		throw std::runtime_error("Gia tri plate no_plate khong duoc rong");
+		throw std::runtime_error("Gia tri plate no_plate không được rong");
 	}
 	if (plate_min_length_ <= 0 || plate_max_length_ < plate_min_length_) {
-		throw std::runtime_error("Khoang do dai bien so khong hop le");
+		throw std::runtime_error("Khoang do dai bịển số không hop le");
 	}
 }
 
@@ -86,7 +86,7 @@ VehicleIdentity& VehicleIdentityStore::Ensure(int track_id) {
 		return it->second;
 	}
 	VehicleIdentity fresh;
-	// Tao moi record identity khi track_id xuat hien lan dau.
+	// Tao moi record identity khi track_id xuat hiện lan dau.
 	fresh.track_id = track_id;
 	auto inserted = identities_.emplace(track_id, std::move(fresh));
 	return inserted.first->second;
@@ -106,7 +106,7 @@ void VehicleIdentityStore::UpdateBrand(int track_id, int brand_id, float brand_c
 	}
 	VehicleIdentity& one = Ensure(track_id);
 	if (one.brand_accepted || one.brand_forced_unknown) {
-		// Da chap nhan brand hoac het budget thi khoa ket qua, khong ghi de.
+		// Da chap nhan brand hoặc het budget thi khoa kết quả, không ghi để.
 		return;
 	}
 
@@ -120,7 +120,7 @@ void VehicleIdentityStore::UpdateBrand(int track_id, int brand_id, float brand_c
 	}
 
 	if (one.brand_attempts >= brand_max_attempts_) {
-		// Het budget predict brand: khoa lai de frame sau khong classify nua.
+		// Het budget predict brand: khoa lai để frame sau không classify nua.
 		one.brand_forced_unknown = true;
 	}
 }
@@ -131,17 +131,17 @@ void VehicleIdentityStore::UpdatePlate(int track_id, const std::string& plate_te
 	}
 	VehicleIdentity& one = Ensure(track_id);
 	if (one.plate_accepted) {
-		// Da chap nhan plate (hoac forced unknown) thi bo qua lan cap nhat tiep.
+		// Da chap nhan plate (hoặc forced unknown) thi bỏ qua lan cap nhất tiep.
 		return;
 	}
 
-	// Moi lan goi UpdatePlate duoc xem la 1 lan da doc OCR plate cho track nay.
+	// Mỗi lần gọi UpdatePlate được xem la 1 lan da đọc OCR plate cho track nay.
 	++one.plate_ocr_attempts;
 
 	bool accepted = false;
 	std::string normalized_plate_text;
 	if (!plate_text.empty() && HasUnderscoreOnlyAtEnd(plate_text)) {
-		// Chuan hoa text OCR truoc khi kiem tra do dai/nguong conf.
+		// Chuan hoa text OCR trước khi kiểm tra do dai/ngưỡng conf.
 		normalized_plate_text = TrimTrailingUnderscore(plate_text);
 		if (!normalized_plate_text.empty()) {
 			const int plate_len = static_cast<int>(normalized_plate_text.size());
@@ -152,7 +152,7 @@ void VehicleIdentityStore::UpdatePlate(int track_id, const std::string& plate_te
 	}
 
 	if (accepted) {
-		// Khi dat dieu kien, dong bang ket qua bien so cho track nay.
+		// Khi dat dieu kien, dong bang kết quả bịển số cho track nay.
 		one.plate_accepted = true;
 		one.plate_forced_unknown = false;
 		one.plate_forced_no_plate = false;
@@ -162,9 +162,9 @@ void VehicleIdentityStore::UpdatePlate(int track_id, const std::string& plate_te
 		return;
 	}
 
-	// Vuot budget OCR ma van khong chap nhan duoc -> khoa unknown.
+	// Vuot budget OCR ma van không chap nhan được -> khoa unknown.
 	if (one.plate_ocr_attempts >= plate_max_ocr_attempts_) {
-		// Het budget OCR: danh dau unknown de ket thuc qua trinh tim bien so.
+		// Het budget OCR: danh dau unknown để ket thuc qua trinh tim bịển số.
 		one.plate_accepted = true;
 		one.plate_forced_unknown = true;
 		one.plate_forced_no_plate = false;
@@ -185,7 +185,7 @@ void VehicleIdentityStore::MarkPlateMiss(int track_id) {
 
 	++one.plate_detect_attempts;
 	if (one.plate_detect_attempts >= plate_max_detect_attempts_) {
-		// Het budget detect: khoa plate=no_plate va bo qua detect/oCR tu frame sau.
+		// Het budget detect: khoa plate=no_plate va bỏ qua detect/oCR tu frame sau.
 		one.plate_accepted = true;
 		one.plate_forced_unknown = false;
 		one.plate_forced_no_plate = true;
