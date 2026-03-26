@@ -1,9 +1,9 @@
 /**
  * @file ocr_batch.h
- * @brief Khai bao API OCR theo lo (batch) cho danh sach anh bịển số da preprocess.
+ * @brief Khai báo API OCR theo lô (batch) cho danh sách ảnh biển số đã preprocess.
  *
- * File nay định nghia dữ liệu đầu ra OCR va ham infer batch OCR.
- * Mục tiêu la tach phan "gọi model" ra khoi pipeline để code để test va để tai su dùng.
+ * File này định nghĩa dữ liệu đầu ra OCR và hàm infer batch OCR.
+ * Mục tiêu là tách phần "gọi model" ra khỏi pipeline để code dễ test và tái sử dụng.
  */
 #pragma once
 
@@ -16,36 +16,36 @@
 namespace ocr_batch {
 
 /**
- * @brief Kết quả OCR cua mot bịển số.
+ * @brief Kết quả OCR của một biển số.
  */
 struct OcrText {
 	/**
-	 * @brief Chuoi text sau khi decode CTC va hau xu ly.
+	 * @brief Chuỗi text sau khi decode CTC và hậu xử lý.
 	 *
-	 * Có thể rong nếu model không tu tin hoặc anh đầu vào không hop le.
+	 * Có thể rỗng nếu model không tự tin hoặc ảnh đầu vào không hợp lệ.
 	 */
 	std::string text;
 	/**
-	 * @brief Độ tin cậy trung binh cua chuoi OCR.
+	 * @brief Độ tin cậy trung bình của chuỗi OCR.
 	 *
-	 * Cach tinh thường la trung binh confidence cua cac timestep non-blank.
-	 * Mien gia tri kỳ vọng: [0, 1].
+	 * Cách tính thường là trung bình confidence của các timestep non-blank.
+	 * Miền giá trị kỳ vọng: [0, 1].
 	 */
 	float conf_avg = 0.0f;
 };
 
 /**
- * @brief Chạy OCR theo lo (batch) cho danh sach anh bịển số.
+ * @brief Chạy OCR theo lô (batch) cho danh sách ảnh biển số.
  *
- * Ham nay infer model OCR ONNX cho nhiều anh cung luc.
- * Thứ tự kết quả đầu ra khớp 1-1 voi thứ tự anh đầu vào.
+ * Hàm này infer model OCR ONNX cho nhiều ảnh cùng lúc.
+ * Thứ tự kết quả đầu ra khớp 1-1 với thứ tự ảnh đầu vào.
  *
- * @param session Session ONNX Runtime cua model OCR.
- * @param rgb_u8_hwc Danh sach anh RGB uint8 layout HWC, moi anh phai continuous.
- * @param alphabet Bang ký tự CTC để map index thanh ký tự.
- * @return std::vector<OcrText> Danh sach kết quả OCR theo tung anh đầu vào.
+ * @param session Session ONNX Runtime của model OCR.
+ * @param rgb_u8_hwc Danh sách ảnh RGB uint8 layout HWC, mỗi ảnh phải continuous.
+ * @param alphabet Bảng ký tự CTC để map index thành ký tự.
+ * @return std::vector<OcrText> Danh sách kết quả OCR theo từng ảnh đầu vào.
  *
- * @note Input model hiện tại kỳ vọng tensor NHWC uint8 co shape (N,64,128,3).
+ * @note Input model hiện tại kỳ vọng tensor NHWC uint8 có shape (N,64,128,3).
  */
 std::vector<OcrText> RunBatch(
 	Ort::Session& session,

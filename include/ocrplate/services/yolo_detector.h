@@ -1,9 +1,9 @@
 /**
  * @file yolo_detector.h
- * @brief Khai bao API detect YOLO cho anh don va batch anh.
+ * @brief Khai báo API detect YOLO cho ảnh đơn và batch ảnh.
  *
- * Module nay nhan anh BGR OpenCV, preprocess theo input model,
- * infer ONNX, parse output, map bbox về he tọa độ anh goc va ap NMS.
+ * Module này nhận ảnh BGR OpenCV, preprocess theo input model,
+ * infer ONNX, parse output, map bbox về hệ tọa độ ảnh gốc và áp NMS.
  */
 #pragma once
 
@@ -18,40 +18,40 @@
 namespace yolo_detector {
 
 /**
- * @brief Thong tin letterbox để map tọa độ bbox về anh goc.
+ * @brief Thông tin letterbox để map tọa độ bbox về ảnh gốc.
  */
 struct LetterboxInfo {
-	/** @brief Chiều rộng anh goc trước resize/letterbox. */
+	/** @brief Chiều rộng ảnh gốc trước resize/letterbox. */
 	int orig_w = 0;
-	/** @brief Chiều cao anh goc trước resize/letterbox. */
+	/** @brief Chiều cao ảnh gốc trước resize/letterbox. */
 	int orig_h = 0;
-	/** @brief Chiều rộng input tensor dua vào model. */
+	/** @brief Chiều rộng input tensor đưa vào model. */
 	int in_w = 0;
-	/** @brief Chiều cao input tensor dua vào model. */
+	/** @brief Chiều cao input tensor đưa vào model. */
 	int in_h = 0;
-	/** @brief Ti le scale để fit anh goc vào khung model (giu ti le). */
+	/** @brief Tỉ lệ scale để fit ảnh gốc vào khung model (giữ tỉ lệ). */
 	float scale = 1.0f;
-	/** @brief So pixel pad theo truc X (vien trai/phai). */
+	/** @brief Số pixel pad theo trục X (viền trái/phải). */
 	int pad_x = 0;
-	/** @brief So pixel pad theo truc Y (vien tren/duoi). */
+	/** @brief Số pixel pad theo trục Y (viền trên/dưới). */
 	int pad_y = 0;
 };
 
 /**
- * @brief Mô tả metadata input tensor cua model YOLO.
+ * @brief Mô tả metadata input tensor của model YOLO.
  */
 struct InputSpec {
-	/** @brief Kieu dữ liệu tensor input ONNX (float32/float16/uint8...). */
+	/** @brief Kiểu dữ liệu tensor input ONNX (float32/float16/uint8...). */
 	ONNXTensorElementDataType type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
 	/** @brief true: NCHW, false: NHWC. */
 	bool nchw = true;
 	/**
-	 * @brief Kích thước batch mong doi.
+	 * @brief Kích thước batch mong đợi.
 	 *
-	 * Gia tri -1 nghia la dynamic batch.
+	 * Giá trị -1 nghĩa là dynamic batch.
 	 */
 	int64_t n = -1;
-	/** @brief So kenh input (thường la 3). */
+	/** @brief Số kênh input (thường là 3). */
 	int64_t c = 3;
 	/** @brief Chiều cao tensor input model. */
 	int64_t h = 640;
@@ -60,16 +60,16 @@ struct InputSpec {
 };
 
 /**
- * @brief Detect YOLO theo batch anh BGR.
+ * @brief Detect YOLO theo batch ảnh BGR.
  *
- * @param session Session ONNX Runtime cua model detect.
- * @param bgr_images Danh sach anh đầu vào BGR.
- * @param conf_threshold Ngưỡng confidence để loc detection.
+ * @param session Session ONNX Runtime của model detect.
+ * @param bgr_images Danh sách ảnh đầu vào BGR.
+ * @param conf_threshold Ngưỡng confidence để lọc detection.
  * @param nms_iou_threshold Ngưỡng IoU cho NMS.
- * @return std::vector<std::vector<Detection>> Kết quả detect theo tung anh.
+ * @return std::vector<std::vector<Detection>> Kết quả detect theo từng ảnh.
  *
- * @note Ham tu xu ly input layout NCHW/NHWC va type float/uint8 theo model.
- * @note BBox được map nguoc về he tọa độ anh goc sau letterbox.
+ * @note Hàm tự xử lý input layout NCHW/NHWC và type float/uint8 theo model.
+ * @note BBox được map ngược về hệ tọa độ ảnh gốc sau letterbox.
  */
 std::vector<std::vector<Detection>> RunBatch(
 	Ort::Session& session,
@@ -78,13 +78,13 @@ std::vector<std::vector<Detection>> RunBatch(
 	float nms_iou_threshold = 0.35f);
 
 /**
- * @brief Detect YOLO cho mot anh don.
+ * @brief Detect YOLO cho một ảnh đơn.
  *
- * @param session Session ONNX Runtime cua model detect.
- * @param bgr_image Anh đầu vào BGR.
- * @param conf_threshold Ngưỡng confidence để loc detection.
+ * @param session Session ONNX Runtime của model detect.
+ * @param bgr_image Ảnh đầu vào BGR.
+ * @param conf_threshold Ngưỡng confidence để lọc detection.
  * @param nms_iou_threshold Ngưỡng IoU cho NMS.
- * @return std::vector<Detection> Danh sach detection cua anh đầu vào.
+ * @return std::vector<Detection> Danh sách detection của ảnh đầu vào.
  */
 std::vector<Detection> RunSingle(
 	Ort::Session& session,

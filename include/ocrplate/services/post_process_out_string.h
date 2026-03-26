@@ -1,8 +1,8 @@
 /**
  * @file post_process_out_string.h
- * @brief Khai bao ham hau xu ly kết quả OCR index thanh chuoi text.
+ * @brief Khai báo hàm hậu xử lý kết quả OCR index thành chuỗi text.
  *
- * Module nay map index -> ký tự theo alphabet va cat blank token o cuoi chuoi.
+ * Module này map index -> ký tự theo alphabet và cắt blank token ở cuối chuỗi.
  */
 #pragma once
 
@@ -13,17 +13,17 @@
 namespace post_process_out_string {
 
 /**
- * @brief Hau xu ly chuoi index OCR thanh chuoi text.
+ * @brief Hậu xử lý chuỗi index OCR thành chuỗi text.
  *
- * Quy tac mac định:
- * - Map moi index sang ký tự tu alphabet.
- * - Cat cac token blank/pad o cuoi chuoi.
- * - Giu nguyen cac ký tự hop le trong than chuoi.
+ * Quy tắc mặc định:
+ * - Map mỗi index sang ký tự từ alphabet.
+ * - Cắt các token blank/pad ở cuối chuỗi.
+ * - Giữ nguyên các ký tự hợp lệ trong thân chuỗi.
  *
  * @param indices Kết quả argmax theo timestep.
- * @param alphabet Bang ký tự map index -> char.
- * @param blank_index Vi tri token blank CTC trong alphabet.
- * @return std::string Chuoi text da hau xu ly.
+ * @param alphabet Bảng ký tự map index -> char.
+ * @param blank_index Vị trí token blank CTC trong alphabet.
+ * @return std::string Chuỗi text đã hậu xử lý.
  */
 std::string PostprocessIndicesToString(const std::vector<int64_t>& indices,
 								const std::string& alphabet,

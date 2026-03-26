@@ -37,8 +37,8 @@ struct BrandResult {
 	 *
 	 * @param session Session ONNX Runtime của model classifier.
 	 * @param bgr_image Ảnh BGR của crop phương tiện (OpenCV).
- * @param input_h Chiều cao input model.
- * @param input_w Chiều rộng input model.
+	 * @param input_h Chiều cao input model.
+	 * @param input_w Chiều rộng input model.
 	 * @return BrandResult Kết quả top-1 gồm class_id và confidence.
 	 *
 	 * @note Hàm tự preprocess ảnh về tensor float32 NCHW.
@@ -55,8 +55,8 @@ BrandResult ClassifySingle(
 	 *
 	 * @param session Session ONNX Runtime của model classifier.
 	 * @param bgr_images Danh sách ảnh crop BGR.
- * @param input_h Chiều cao input model.
- * @param input_w Chiều rộng input model.
+	 * @param input_h Chiều cao input model.
+	 * @param input_w Chiều rộng input model.
 	 * @return std::vector<BrandResult> Danh sách kết quả top-1 theo thứ tự đầu vào.
 	 *
 	 * @note Input tensor model kỳ vọng float32 NCHW shape (N,3,H,W).
