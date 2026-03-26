@@ -21,6 +21,7 @@
 #include "ocrplate/services/brand_classifier.h"
 #include "ocrplate/services/ocr_batch.h"
 #include "ocrplate/utils/plate_parallel.h"
+#include "ocrplate/utils/rect_utils.h"
 #include "ocrplate/tracking/vehicle_identity_store.h"
 #include "ocrplate/services/yolo_detector.h"
 #include "ocrplate/pipeline/track_trace.h"
@@ -67,17 +68,6 @@ const char* BrandClassName(int brand_id) {
 	case 22: return "VinFast";
 	default: return "UnknownBrand";
 	}
-}
-
-// Chuẩn hóa bounding box về miền ảnh hợp lệ, tránh out-of-bound.
-cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
-	int ix1 = std::max(0, std::min(static_cast<int>(std::floor(x1)), w - 1));
-	int iy1 = std::max(0, std::min(static_cast<int>(std::floor(y1)), h - 1));
-	int ix2 = std::max(0, std::min(static_cast<int>(std::ceil(x2)), w - 1));
-	int iy2 = std::max(0, std::min(static_cast<int>(std::ceil(y2)), h - 1));
-	int rw = std::max(0, ix2 - ix1);
-	int rh = std::max(0, iy2 - iy1);
-	return cv::Rect(ix1, iy1, rw, rh);
 }
 
 bool IsPointAboveGateLine(const cv::Point& p, const cv::Point& p1, const cv::Point& p2) {
@@ -388,7 +378,7 @@ bool InferFrameOverlay(
 	vehicle_rects.reserve(vehicles.size());
 	vehicles_used.reserve(vehicles.size());
 	for (const auto& v : vehicles) {
-		cv::Rect r = ToRectClamped(v.x1, v.y1, v.x2, v.y2, bgr.cols, bgr.rows);
+		cv::Rect r = rect_utils::ToRectClamped(v.x1, v.y1, v.x2, v.y2, bgr.cols, bgr.rows);
 		if (r.width <= 2 || r.height <= 2) {
 			// Bỏ qua bbox quá nhỏ vì OCR/plate detect thường không ổn định.
 			continue;
