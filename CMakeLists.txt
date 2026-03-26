@@ -55,6 +55,7 @@ add_library(ocrplate_utils STATIC
 	src/utils/onnx_decode_utils.cpp
 	src/utils/parallel_utils.cpp
 	src/utils/plate_parallel.cpp
+	src/utils/rect_utils.cpp
 	src/utils/ocr_report.cpp
 )
 
