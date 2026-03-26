@@ -168,15 +168,15 @@ void DrawVehicle(
 }
 
 struct PlatePipelineResult {
-	// Kết quả OCR theo tung plate candidate hop le.
+	// Kết quả OCR theo từng plate candidate hợp lệ.
 	std::vector<ocr_batch::OcrText> texts;
-	// BBox bịển số da map về he tọa độ anh goc.
+	// BBox biển số đã map về hệ tọa độ ảnh gốc.
 	std::vector<yolo_detector::Detection> plate_boxes_in_image;
-	// Chỉ số xe cha ung voi moi plate (index trong tap vehicle input).
+	// Chỉ số xe cha ứng với mỗi plate (index trong tập vehicle input).
 	std::vector<size_t> plate_vehicle_indices;
-	// Danh dau xe nao detect được plate.
+	// Đánh dấu xe nào detect được plate.
 	std::vector<bool> vehicle_has_plate;
-	// Co ton tai it nhất 1 plate hop le hay không.
+	// Có tồn tại ít nhất 1 plate hợp lệ hay không.
 	bool has_any_plate = false;
 };
 
@@ -199,7 +199,7 @@ PlatePipelineResult RunPlatePipeline(
 		app_config::kPlateConfThresh);
 
 	auto map_future = std::async(std::launch::async, [&]() {
-		// mapped: plate boxes sau khi doi tọa độ về anh goc.
+		// mapped: plate boxes sau khi đổi tọa độ về ảnh gốc.
 		std::vector<yolo_detector::Detection> mapped;
 		// mapped_vehicle_indices: map plate -> vehicle index.
 		std::vector<size_t> mapped_vehicle_indices;
@@ -343,11 +343,11 @@ bool InferFrameOverlay(
 
 	std::vector<int> track_ids(vehicles_used.size(), -1);
 	if (tracking_ctx != nullptr) {
-		// Gan track id cho xe theo tracker legacy.
+		// Gán track id cho xe theo tracker legacy.
 		track_ids = tracking_ctx->tracker.Update(vehicles_used);
 	}
 
-	// Tap con cho nhánh brand/plate để tranh infer thua tren doi tuong da chốt kết quả.
+		// Tập con cho nhánh brand/plate để tránh infer thừa trên đối tượng đã chốt kết quả.
 	std::vector<size_t> need_brand_indices;
 	std::vector<cv::Mat> need_brand_crops;
 	std::vector<size_t> need_plate_indices;
@@ -392,7 +392,7 @@ bool InferFrameOverlay(
 	});
 
 	std::vector<brand_classifier::BrandResult> car_brand_results = brand_future.get();
-	// brand_id_per_vehicle luu kết quả classify theo index toàn bộ vehicles_used.
+	// brand_id_per_vehicle lưu kết quả classify theo index toàn bộ vehicles_used.
 	std::vector<int> brand_id_per_vehicle(vehicles_used.size(), -1);
 	for (size_t k = 0; k < need_brand_indices.size() && k < car_brand_results.size(); ++k) {
 		const size_t vehicle_idx = need_brand_indices[k];
@@ -403,7 +403,7 @@ bool InferFrameOverlay(
 	}
 
 	PlatePipelineResult plate_result = plate_future.get();
-	// vehicle_has_plate map nguoc tu subset need_plate về index toàn bộ vehicles_used.
+	// vehicle_has_plate map ngược từ subset need_plate về index toàn bộ vehicles_used.
 	std::vector<bool> vehicle_has_plate(vehicles_used.size(), false);
 	for (size_t sub_idx = 0; sub_idx < need_plate_indices.size(); ++sub_idx) {
 		const size_t global_idx = need_plate_indices[sub_idx];
@@ -422,7 +422,7 @@ bool InferFrameOverlay(
 		}
 		const size_t global_vehicle_idx = need_plate_indices[sub_vehicle_idx];
 		if (tracking_ctx != nullptr) {
-			// Cap nhất tich luy OCR vào identity store để chap nhan theo nhiều frame.
+			// Cập nhật tích lũy OCR vào identity store để chấp nhận theo nhiều frame.
 			tracking_ctx->identity_store.UpdatePlate(
 				track_ids[global_vehicle_idx],
 				plate_result.texts[plate_idx].text,

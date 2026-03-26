@@ -30,44 +30,44 @@
 namespace fs = std::filesystem;
 static const fs::path kOutputDir = "../out/build/img_out";
 
-// Kieu dữ liệu luu vung ROI người dùng chon cho flow video legacy.
-// Nho nhất gom bbox bao ngoai + polygon + mask để suy giảm infer ngoai vung.
+// Kiểu dữ liệu lưu vùng ROI người dùng chọn cho flow video legacy.
+// Nhỏ nhất gồm bbox bao ngoài + polygon + mask để suy giảm infer ngoài vùng.
 struct WorkingArea {
-	// BBox bao ngoai ROI để cat view nhánh.
+	// BBox bao ngoài ROI để cắt view nhánh.
 	cv::Rect bbox;
-	// Polygon ROI trong he tọa độ frame goc.
+	// Polygon ROI trong hệ tọa độ frame gốc.
 	std::vector<cv::Point> polygon_abs;
-	// Polygon ROI da doi sang he tọa độ local cua bbox.
+	// Polygon ROI đã đổi sang hệ tọa độ local của bbox.
 	std::vector<cv::Point> polygon_local;
-	// Mask nhi phan local (255 trong ROI).
+	// Mask nhị phân local (255 trong ROI).
 	cv::Mat mask_local;
-	// true nếu user chon polygon hop le.
+	// true nếu user chọn polygon hợp lệ.
 	bool enabled = false;
 };
 
-// Trang thai tam cho thao tac click chuot về polygon.
+// Trạng thái tạm cho thao tác click chuột vẽ polygon.
 struct PolygonPickerState {
-	// Tap diem user da click.
+	// Tập điểm user đã click.
 	std::vector<cv::Point> points;
-	// Vi tri hover hiện tại để về preview doan line cuoi.
+	// Vị trí hover hiện tại để vẽ preview đoạn line cuối.
 	cv::Point hover{-1, -1};
 };
 
-// Cau hinh gate line dùng để trigger predict theo crossing.
+// Cấu hình gate line dùng để trigger predict theo crossing.
 struct GateLineSelection {
-	// Diem dau line trong he tọa độ local ROI.
+	// Điểm đầu line trong hệ tọa độ local ROI.
 	cv::Point p1_local{0, 0};
-	// Diem cuoi line trong he tọa độ local ROI.
+	// Điểm cuối line trong hệ tọa độ local ROI.
 	cv::Point p2_local{0, 0};
-	// true nếu gate line được chon hop le.
+	// true nếu gate line được chọn hợp lệ.
 	bool enabled = false;
 };
 
-// Trang thai tam cho thao tac click chuot chon gate line.
+// Trạng thái tạm cho thao tác click chuột chọn gate line.
 struct GateLinePickerState {
-	// Danh sach diem click (tối đa 2 diem).
+	// Danh sách điểm click (tối đa 2 điểm).
 	std::vector<cv::Point> points;
-	// Vi tri hover chuot để về preview line.
+	// Vị trí hover chuột để vẽ preview line.
 	cv::Point hover{-1, -1};
 };
 
