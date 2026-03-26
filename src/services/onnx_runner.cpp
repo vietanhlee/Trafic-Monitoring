@@ -36,7 +36,7 @@ std::vector<int64_t> RunModelGetArgMax(
 }
 
 /**
- * @brief Infer model OCR ONNX và tra về index + confidence.
+ * @brief Infer model OCR ONNX và trả về index + confidence.
  *
  * @param env Ort::Env đã khởi tạo.
  * @param model_path Đường dẫn model .onnx.
@@ -58,19 +58,19 @@ ArgMaxWithConfResult RunModelGetArgMaxAndConf(
     Ort::SessionOptions sess_options;
     sess_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-    // Mac định ONNX Runtime tren Linux dùng CPUExecutionProvider.
+    // Mặc định ONNX Runtime trên Linux dùng CPUExecutionProvider.
     Ort::Session session(env, model_path.c_str(), sess_options);
 
     Ort::AllocatorWithDefaultOptions allocator;
-    // Lấy tên input/output tu graph để run bang API ten-node.
+    // Lấy tên input/output từ graph để run bằng API tên-node.
     auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
-	// Con trỏ tên input hợp lệ trong vòng doi cua input_name_alloc.
+    // Con trỏ tên input hợp lệ trong vòng đời của input_name_alloc.
     const char* input_name = input_name_alloc.get();
 
-    // Tao tensor input: (1, H, W, C), uint8.
-    // Luu y: ham nay kỳ vọng nhwc_u8 da dùng layout NHWC.
+    // Tạo tensor input: (1, H, W, C), uint8.
+    // Lưu ý: hàm này kỳ vọng nhwc_u8 đã dùng layout NHWC.
     const std::vector<int64_t> input_shape = {1, h, w, c};
-	// So phan tu tensor input (không tinh bytes) cho shape (1,H,W,C).
+	// Số phần tử tensor input (không tính bytes) cho shape (1,H,W,C).
     const size_t input_tensor_size = static_cast<size_t>(h * w * c);
 
     // Tạo mô tả bộ nhớ CPU cho tensor đầu vào.
@@ -113,7 +113,7 @@ ArgMaxWithConfResult RunModelGetArgMaxAndConf(
     }
 
     const std::vector<const char*> input_names = {input_name};
-    // Infer 1 lan, lấy tắt ca output nhung uu tien output[0] cho decode CTC.
+    // Infer 1 lần, lấy tất cả output nhưng ưu tiên output[0] cho decode CTC.
     auto outputs = session.Run(
         Ort::RunOptions{nullptr},
         input_names.data(),
@@ -129,20 +129,20 @@ ArgMaxWithConfResult RunModelGetArgMaxAndConf(
     }
 
     auto shape_info = out0.GetTensorTypeAndShapeInfo();
-	// out_shape dùng để suy luận rank va kích thước T/C phục vụ decode.
+    // out_shape dùng để suy luận rank và kích thước T/C phục vụ decode.
     const auto out_shape = shape_info.GetShape();
     const ONNXTensorElementDataType out_type = shape_info.GetElementType();
 
-    // Kỳ vọng output co dạng (N, T, C) hoặc (T, C)
+    // Kỳ vọng output có dạng (N, T, C) hoặc (T, C).
     int64_t time_dim = -1;
     int64_t class_dim = -1;
 
     if (out_shape.size() == 3) {
-		// Rank-3: [N, T, C]. O day chi decode sample dau tien (batch[0]).
+        // Rank-3: [N, T, C]. Ở đây chỉ decode sample đầu tiên (batch[0]).
         time_dim = out_shape[1];
         class_dim = out_shape[2];
     } else if (out_shape.size() == 2) {
-		// Rank-2: [T, C], không co truc batch.
+        // Rank-2: [T, C], không có trục batch.
         time_dim = out_shape[0];
         class_dim = out_shape[1];
     } else {
@@ -150,20 +150,20 @@ ArgMaxWithConfResult RunModelGetArgMaxAndConf(
     }
 
     if (time_dim <= 0 || class_dim <= 0) {
-		// Bao về trước khi decode để tranh truy cap bộ nhớ sai.
+        // Bảo vệ trước khi decode để tránh truy cập bộ nhớ sai.
         throw std::runtime_error("Output shape không hợp lệ");
     }
 
     if (out_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
         const float* data = out0.GetTensorData<float>();
-		// first tro den dau vung [T,C] cần decode.
+        // first trỏ đến đầu vùng [T,C] cần decode.
         const float* first = (out_shape.size() == 3) ? (data + 0 * time_dim * class_dim) : data;
         return onnx_decode_utils::ArgMaxWithConf(first, time_dim, class_dim);
     }
 
     if (out_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
         const double* data = out0.GetTensorData<double>();
-		// Tuong tu branch float32, nhung danh cho output float64.
+        // Tương tự branch float32, nhưng dành cho output float64.
         const double* first = (out_shape.size() == 3) ? (data + 0 * time_dim * class_dim) : data;
         return onnx_decode_utils::ArgMaxWithConf(first, time_dim, class_dim);
     }

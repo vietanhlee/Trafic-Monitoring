@@ -11,13 +11,6 @@
 namespace yolo_detector {
 namespace detail {
 
-/**
- * @brief Tính IoU giữa hai bounding box.
- *
- * @param a Bounding box thứ nhất.
- * @param b Bounding box thứ hai.
- * @return float IoU trong [0,1].
- */
 float IoU(const Detection& a, const Detection& b) {
 	// Tính phần giao / phần hợp giữa 2 bbox.
 	const float xx1 = std::max(a.x1, b.x1);
@@ -46,12 +39,12 @@ static constexpr float kContainmentSuppression = 0.72f;
  * @param iy1 Tọa độ y1 box i.
  * @param ix2 Tọa độ x2 box i.
  * @param iy2 Tọa độ y2 box i.
- * @param area_i Dien tích box i.
+ * @param area_i Diện tích box i.
  * @param jx1 Tọa độ x1 box j.
  * @param jy1 Tọa độ y1 box j.
  * @param jx2 Tọa độ x2 box j.
  * @param jy2 Tọa độ y2 box j.
- * @param area_j Dien tích box j.
+ * @param area_j Diện tích box j.
  * @param iou_threshold Ngưỡng IoU để suppress.
  * @return true Nếu box j bị suppress.
  * @return false Nếu box j được giữ lại.
@@ -84,31 +77,24 @@ static inline bool ShouldSuppress(
 	}
 
 	const float min_area = std::max(1e-6f, std::min(area_i, area_j));
-	// containment độ dài của box nhỏ hơn trong box lớn hơn.
+	// Containment: độ phủ của box nhỏ hơn trong box lớn hơn.
 	const float containment = inter / min_area;
-	// Them rang buoc containment để loại box dài nhau quá nhiều.
+	// Thêm ràng buộc containment để loại box dài nhau quá nhiều.
 	return containment >= kContainmentSuppression;
 }
 
-/**
- * @brief Ap dùng NMS theo class cho danh sách detection.
- *
- * @param dets Danh sách detection trước NMS.
- * @param iou_threshold Ngưỡng IoU suppress.
- * @return std::vector<Detection> Danh sách detection sau NMS.
- */
 std::vector<Detection> ApplyNMS(std::vector<Detection> dets, float iou_threshold) {
 	if (dets.size() <= 1) {
 		return dets;
 	}
 
 	std::sort(dets.begin(), dets.end(), [](const Detection& a, const Detection& b) {
-		// Sort giảm dần theo score để NMS greedy hoạt động dùng.
+		// Sort giảm dần theo score để NMS greedy hoạt động đúng.
 		return a.score > b.score;
 	});
 
 	// iou_threshold <= 0 được xem là tắt NMS.
-	// Van giu thứ tự score giảm dần để các nhánh o trên có thể lấy top-1 on định.
+	// Vẫn giữ thứ tự score giảm dần để các nhánh ở trên có thể lấy top-1 ổn định.
 	if (iou_threshold <= 0.0f) {
 		return dets;
 	}
@@ -126,7 +112,7 @@ std::vector<Detection> ApplyNMS(std::vector<Detection> dets, float iou_threshold
 	std::vector<bool> suppressed(limit, false);
 	for (size_t i = 0; i < limit; ++i) {
 		if (suppressed[i]) continue;
-		// i la box giu lai tiep theo theo thứ tự score giảm dần.
+		// i là box giữ lại tiếp theo theo thứ tự score giảm dần.
 		kept.push_back(dets[i]);
 		const float ix1 = dets[i].x1;
 		const float iy1 = dets[i].y1;

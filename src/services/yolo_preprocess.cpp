@@ -19,12 +19,6 @@ namespace detail {
 
 // ── Input spec (cached per session pointer) ───────────────────────────
 
-/**
- * @brief Đọc input metadata của session YOLO và cache thread-local.
- *
- * @param session Session ONNX Runtime YOLO.
- * @return InputSpec Cấu hình input tensor (type/layout/shape).
- */
 InputSpec GetInputSpec(Ort::Session& session) {
 	// Cache: tránh gọi lại metadata mỗi lần infer.
 	static thread_local std::uintptr_t cached_session_id = 0;
@@ -64,7 +58,7 @@ InputSpec GetInputSpec(Ort::Session& session) {
 		spec.h = shape[1];
 		spec.w = shape[2];
 	} else {
-		// Trường hợp mở ho: fallback NCHW để giu tương thích model cu.
+		// Trường hợp mơ hồ: fallback NCHW để giữ tương thích model cũ.
 		spec.nchw = true;
 		spec.c = (shape[1] > 0 ? shape[1] : 3);
 		spec.h = shape[2];
@@ -72,7 +66,7 @@ InputSpec GetInputSpec(Ort::Session& session) {
 	}
 
 	if (spec.c != 3) {
-		throw std::runtime_error("YOLO input không hỗ trợ so kenh != 3");
+		throw std::runtime_error("YOLO input không hỗ trợ số kênh != 3");
 	}
 	if (spec.h <= 0 || spec.w <= 0) {
 		// Fallback an toàn nếu shape dynamic/chưa xác định.
@@ -86,18 +80,9 @@ InputSpec GetInputSpec(Ort::Session& session) {
 
 // ── Letterbox ─────────────────────────────────────────────────────────
 
-/**
- * @brief Resize + letterbox ảnh BGR về kích thước model và đổi sang RGB.
- *
- * @param bgr Ảnh đầu vào BGR.
- * @param target_w Chiều rộng input model.
- * @param target_h Chiều cao input model.
- * @param info [out] Thong tin scale/pad để map bbox về ảnh gốc.
- * @return cv::Mat Ảnh RGB đã letterbox.
- */
 cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, LetterboxInfo& info) {
 	if (bgr.empty()) {
-		throw std::runtime_error("Anh rong");
+		throw std::runtime_error("Ảnh rỗng");
 	}
 	info.orig_w = bgr.cols;
 	info.orig_h = bgr.rows;
@@ -106,12 +91,12 @@ cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, Lette
 
 	const float r = std::min(static_cast<float>(target_w) / static_cast<float>(info.orig_w),
 						static_cast<float>(target_h) / static_cast<float>(info.orig_h));
-	// scale dòng nhất theo canh ngan hon để giu ty le hinh.
+	// Scale đồng nhất theo cạnh ngắn hơn để giữ tỷ lệ hình.
 	info.scale = r;
 
 	const int new_w = static_cast<int>(std::round(info.orig_w * r));
 	const int new_h = static_cast<int>(std::round(info.orig_h * r));
-	// pad_x/pad_y la lech cần giua noi dùng that va vien letterbox.
+	// pad_x/pad_y là lệch căn giữa nội dung thật và viền letterbox.
 	info.pad_x = (target_w - new_w) / 2;
 	info.pad_y = (target_h - new_h) / 2;
 
@@ -119,7 +104,7 @@ cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, Lette
 	cv::resize(bgr, resized, cv::Size(new_w, new_h), 0.0, 0.0, cv::INTER_LINEAR);
 
 	cv::Mat padded(target_h, target_w, CV_8UC3, cv::Scalar(114, 114, 114));
-	// Dien nen 114 theo convention YOLO letterbox.
+	// Điền nền 114 theo convention YOLO letterbox.
 	resized.copyTo(padded(cv::Rect(info.pad_x, info.pad_y, new_w, new_h)));
 
 	cv::Mat rgb;
@@ -132,26 +117,16 @@ cv::Mat LetterboxToSizeRGB(const cv::Mat& bgr, int target_w, int target_h, Lette
 
 // ── Tensor fill ───────────────────────────────────────────────────────
 
-/**
- * @brief Dong gọi batch anh RGB vào tensor NCHW.
- *
- * @tparam T Kieu tensor dich (float hoặc uint8).
- * @param rgbs_u8 Danh sach anh RGB da letterbox.
- * @param h Chiều cao input tensor.
- * @param w Chiều rộng input tensor.
- * @param out [out] Buffer tensor NCHW.
- * @param scale_01 true nếu cần scale [0,1].
- */
 template <typename T>
 void FillTensorFromRGB_NCHW(const std::vector<cv::Mat>& rgbs_u8, int h, int w, std::vector<T>& out, bool scale_01) {
 	const size_t n = rgbs_u8.size();
 	const size_t plane = static_cast<size_t>(h) * static_cast<size_t>(w);
-	// out co tong kích thước N * C * H * W.
+	// out có tổng kích thước N * C * H * W.
 	out.resize(n * 3ull * plane);
 	for (size_t i = 0; i < n; ++i) {
 		const size_t base = i * 3ull * plane;
 		if constexpr (std::is_same_v<T, float>) {
-			// Dùng cv::split cho tốc độ
+			// Dùng cv::split cho tốc độ.
 			cv::Mat float_img;
 			rgbs_u8[i].convertTo(float_img, CV_32FC3, scale_01 ? (1.0 / 255.0) : 1.0);
 			std::vector<cv::Mat> channels(3);
@@ -161,7 +136,7 @@ void FillTensorFromRGB_NCHW(const std::vector<cv::Mat>& rgbs_u8, int h, int w, s
 					channels[c].ptr<float>(0), plane * sizeof(float));
 			}
 		} else {
-			// uint8: giu nguyen gia tri pixel, split truc tiep theo kenh.
+			// uint8: giữ nguyên giá trị pixel, split trực tiếp theo kênh.
 			std::vector<cv::Mat> channels(3);
 			cv::split(rgbs_u8[i], channels);
 			for (int c = 0; c < 3; ++c) {
@@ -172,20 +147,10 @@ void FillTensorFromRGB_NCHW(const std::vector<cv::Mat>& rgbs_u8, int h, int w, s
 	}
 }
 
-/**
- * @brief Dong gọi batch anh RGB vào tensor NHWC.
- *
- * @tparam T Kieu tensor dich (float hoặc uint8).
- * @param rgbs_u8 Danh sach anh RGB da letterbox.
- * @param h Chiều cao input tensor.
- * @param w Chiều rộng input tensor.
- * @param out [out] Buffer tensor NHWC.
- * @param scale_01 true nếu cần scale [0,1].
- */
 template <typename T>
 void FillTensorFromRGB_NHWC(const std::vector<cv::Mat>& rgbs_u8, int h, int w, std::vector<T>& out, bool scale_01) {
 	const size_t n = rgbs_u8.size();
-	// out co tong kích thước N * H * W * C.
+	// out có tổng kích thước N * H * W * C.
 	out.resize(n * static_cast<size_t>(h) * static_cast<size_t>(w) * 3ull);
 	for (size_t i = 0; i < n; ++i) {
 		const uint8_t* p = rgbs_u8[i].ptr<uint8_t>(0);

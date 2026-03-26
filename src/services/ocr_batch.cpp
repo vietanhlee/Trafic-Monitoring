@@ -102,12 +102,12 @@ std::shared_ptr<const OcrSessionMeta> GetSessionMeta(Ort::Session& session) {
 }
 
 /**
- * @brief Kiểm tra mot anh OCR đầu vào co dùng type/shape/memory layout.
+ * @brief Kiểm tra một ảnh OCR đầu vào có đúng type/shape/memory layout.
  *
  * @param m Anh đầu vào cần kiểm tra.
  * @param h Chiều cao kỳ vọng.
  * @param w Chiều rộng kỳ vọng.
- * @throws std::runtime_error Nếu input không hợp le.
+ * @throws std::runtime_error Nếu input không hợp lệ.
  */
 void EnsureRgbU8(const cv::Mat& m, int h, int w) {
 	if (m.empty()) {
@@ -117,19 +117,19 @@ void EnsureRgbU8(const cv::Mat& m, int h, int w) {
 		throw std::runtime_error("OCR input cần CV_8UC3");
 	}
 	if (m.rows != h || m.cols != w) {
-		// Tắt ca anh trong batch phai dong nhất shape để pack 1 tensor liên tục.
+		// Tất cả ảnh trong batch phải đồng nhất shape để pack 1 tensor liên tục.
 		throw std::runtime_error("OCR input sai kích thước (cần " + std::to_string(w) + "x" + std::to_string(h) + ")");
 	}
 	if (!m.isContinuous()) {
-		// Tensor tao bang memcpy yeu cau dữ liệu liên tục trong bộ nhớ.
+		// Tensor tạo bằng memcpy yêu cầu dữ liệu liên tục trong bộ nhớ.
 		throw std::runtime_error("OCR input phai continuous");
 	}
 }
 
 /**
- * @brief Decode output tensor OCR theo batch thanh index + confidence.
+ * @brief Decode output tensor OCR theo batch thành index + confidence.
  *
- * @param out0 Output tensor dau tien cua model OCR.
+ * @param out0 Output tensor đầu tiên của model OCR.
  * @return std::vector<onnx_runner::ArgMaxWithConfResult> Kết quả decode theo batch.
  */
 std::vector<onnx_runner::ArgMaxWithConfResult> DecodeBatchOutput(Ort::Value& out0) {
@@ -143,9 +143,9 @@ std::vector<onnx_runner::ArgMaxWithConfResult> DecodeBatchOutput(Ort::Value& out
 		throw std::runtime_error("OCR output rank không hop le (cần 3), rank=" + std::to_string(shape.size()));
 	}
 	const int64_t batch = shape[0];
-	// time_dim: so timestep theo truc chuoi OCR.
+	// time_dim: số timestep theo trục chuỗi OCR.
 	const int64_t time_dim = shape[1];
-	// class_dim: so lop ký tự (alphabet + blank).
+	// class_dim: số lớp ký tự (alphabet + blank).
 	const int64_t class_dim = shape[2];
 	if (batch <= 0 || time_dim <= 0 || class_dim <= 0) {
 		throw std::runtime_error("OCR output shape không hop le");
@@ -154,20 +154,20 @@ std::vector<onnx_runner::ArgMaxWithConfResult> DecodeBatchOutput(Ort::Value& out
 	std::vector<onnx_runner::ArgMaxWithConfResult> out;
 	out.reserve(static_cast<size_t>(batch));
 	if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-		// Model xuat float32: decode tung sample theo [T, C].
+		// Model xuất float32: decode từng sample theo [T, C].
 		const float* data = out0.GetTensorData<float>();
 		for (int64_t n = 0; n < batch; ++n) {
-			// base la con tro dau ma tran logits cua sample n.
+			// base là con trỏ đầu ma trận logits của sample n.
 			const float* base = data + n * time_dim * class_dim;
 			out.push_back(onnx_decode_utils::ArgMaxWithConf(base, time_dim, class_dim));
 		}
 		return out;
 	}
 	if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
-		// Hỗ trợ them output double để tương thích model export khac nhau.
+		// Hỗ trợ thêm output double để tương thích model export khác nhau.
 		const double* data = out0.GetTensorData<double>();
 		for (int64_t n = 0; n < batch; ++n) {
-			// base la con tro dau ma tran logits cua sample n (kieu f64).
+			// base là con trỏ đầu ma trận logits của sample n (kiểu f64).
 			const double* base = data + n * time_dim * class_dim;
 			out.push_back(onnx_decode_utils::ArgMaxWithConf(base, time_dim, class_dim));
 		}
@@ -177,32 +177,32 @@ std::vector<onnx_runner::ArgMaxWithConfResult> DecodeBatchOutput(Ort::Value& out
 }
 
 /**
- * @brief Tinh confidence trung binh tren cac timestep non-blank.
+ * @brief Tính confidence trung bình trên các timestep non-blank.
  *
- * @param indices Day index top-1 theo timestep.
- * @param conf Day confidence top-1 theo timestep.
+ * @param indices Dãy index top-1 theo timestep.
+ * @param conf Dãy confidence top-1 theo timestep.
  * @param blank_index Chỉ số token blank CTC.
- * @return float Gia tri confidence trung binh cho phan text thuc.
+ * @return float Giá trị confidence trung bình cho phần text thực.
  */
 float ComputeAvgConfNonBlank(const std::vector<int64_t>& indices, const std::vector<float>& conf, int64_t blank_index) {
 	if (indices.empty() || conf.empty()) {
 		return 0.0f;
 	}
-	// T la so timestep hop le co du ca index va conf.
+	// T là số timestep hợp lệ có đủ cả index và conf.
 	const size_t T = std::min(indices.size(), conf.size());
 	int last_nonblank = -1;
 	for (size_t t = 0; t < T; ++t) {
-		// Tim vi tri ký tự non-blank cuoi để bỏ qua phan duoi chuoi (padding/time-step du).
+		// Tìm vị trí ký tự non-blank cuối để bỏ qua phần đuôi chuỗi (padding/time-step dư).
 		if (indices[t] != blank_index) {
 			last_nonblank = static_cast<int>(t);
 		}
 	}
 	if (last_nonblank < 0) {
-		// Toàn bộ la blank -> coi nhu không co text hop le.
+		// Toàn bộ là blank -> coi như không có text hợp lệ.
 		return 0.0f;
 	}
 	double sum = 0.0;
-	// cnt la so timestep non-blank được dùng để tinh trung binh.
+	// cnt là số timestep non-blank được dùng để tính trung bình.
 	size_t cnt = 0;
 	for (int t = 0; t <= last_nonblank; ++t) {
 		if (indices[static_cast<size_t>(t)] == blank_index) {
@@ -215,13 +215,13 @@ float ComputeAvgConfNonBlank(const std::vector<int64_t>& indices, const std::vec
 }
 
 /**
- * @brief Xu ly truong hop model fix batch=1 nhung input co nhiều anh.
+ * @brief Xử lý trường hợp model fix batch=1 nhưng input có nhiều ảnh.
  *
- * Ham fan-out thanh nhiều infer don va chạy song song theo worker threads.
+ * Hàm fan-out thành nhiều infer đơn và chạy song song theo worker threads.
  *
  * @param session Session ONNX Runtime OCR.
- * @param rgb_u8_hwc Danh sach anh OCR input.
- * @param alphabet Bang ký tự CTC.
+ * @param rgb_u8_hwc Danh sách ảnh OCR input.
+ * @param alphabet Bảng ký tự CTC.
  * @return std::vector<OcrText> Kết quả OCR theo thứ tự đầu vào.
  */
 std::vector<OcrText> RunFixedBatchOneParallel(
@@ -229,7 +229,7 @@ std::vector<OcrText> RunFixedBatchOneParallel(
 	const std::vector<cv::Mat>& rgb_u8_hwc,
 	const std::string& alphabet) {
 	std::vector<OcrText> all(rgb_u8_hwc.size());
-	// worker_count được tinh theo item_count va so core may.
+	// worker_count được tính theo item_count và số core máy.
 	const size_t worker_count = parallel_utils::ResolveWorkerCount(rgb_u8_hwc.size());
 	if (worker_count <= 1 || rgb_u8_hwc.size() <= 1) {
 		for (size_t i = 0; i < rgb_u8_hwc.size(); ++i) {
@@ -239,19 +239,19 @@ std::vector<OcrText> RunFixedBatchOneParallel(
 		return all;
 	}
 
-	// Atomic scheduling giup cần bang tai va giảm overhead tao future.
+	// Atomic scheduling giúp cân bằng tải và giảm overhead tạo future.
 	std::atomic<size_t> next_index{0};
 	std::vector<std::thread> workers;
 	workers.reserve(worker_count);
 	for (size_t w = 0; w < worker_count; ++w) {
 		workers.emplace_back([&]() {
 			while (true) {
-				// i la index sample tiep theo se được worker hiện tại xu ly.
+				// i là index sample tiếp theo sẽ được worker hiện tại xử lý.
 				const size_t i = next_index.fetch_add(1, std::memory_order_relaxed);
 				if (i >= rgb_u8_hwc.size()) {
 					break;
 				}
-				// Gọi RunBatch voi batch=1 để tương thích model fixed-batch=1.
+				// Gọi RunBatch với batch=1 để tương thích model fixed-batch=1.
 				auto out = RunBatch(session, {rgb_u8_hwc[i]}, alphabet);
 				all[i] = std::move(out[0]);
 			}
@@ -266,11 +266,11 @@ std::vector<OcrText> RunFixedBatchOneParallel(
 } // namespace
 
 /**
- * @brief Infer OCR theo batch va tra về text + confidence tung anh.
+ * @brief Infer OCR theo batch và trả về text + confidence từng ảnh.
  *
  * @param session Session ONNX Runtime OCR.
- * @param rgb_u8_hwc Danh sach anh RGB uint8 HWC.
- * @param alphabet Bang ký tự CTC.
+ * @param rgb_u8_hwc Danh sách ảnh RGB uint8 HWC.
+ * @param alphabet Bảng ký tự CTC.
  * @return std::vector<OcrText> Kết quả OCR theo thứ tự đầu vào.
  */
 std::vector<OcrText> RunBatch(
@@ -278,17 +278,17 @@ std::vector<OcrText> RunBatch(
 	const std::vector<cv::Mat>& rgb_u8_hwc,
 	const std::string& alphabet) {
 	if (rgb_u8_hwc.empty()) {
-		// Không co input -> không co output.
+		// Không có input -> không có output.
 		return {};
 	}
 	const auto meta = GetSessionMeta(session);
 
 	// Xử lý model fix batch (thường gặp: batch=1)
 	if (meta->fixed_batch > 0) {
-		// fixed_batch: rang buoc shape input tu model (nếu model static batch).
+		// fixed_batch: ràng buộc shape input từ model (nếu model static batch).
 		const int64_t fixed_batch = meta->fixed_batch;
 		if (fixed_batch == 1 && rgb_u8_hwc.size() > 1) {
-			// Model batch=1: fan-out thanh nhiều infer don để tan dùng CPU.
+			// Model batch=1: fan-out thành nhiều infer đơn để tận dụng CPU.
 			return RunFixedBatchOneParallel(session, rgb_u8_hwc, alphabet);
 		}
 		if (fixed_batch > 1 && static_cast<int64_t>(rgb_u8_hwc.size()) != fixed_batch) {
@@ -298,7 +298,7 @@ std::vector<OcrText> RunBatch(
 
 	const int h = rgb_u8_hwc[0].rows;
 	const int w = rgb_u8_hwc[0].cols;
-	// Validate dong nhất shape/type toàn bộ batch trước khi tao tensor.
+	// Validate đồng nhất shape/type toàn bộ batch trước khi tạo tensor.
 	for (const auto& m : rgb_u8_hwc) {
 		EnsureRgbU8(m, h, w);
 	}
@@ -308,14 +308,14 @@ std::vector<OcrText> RunBatch(
 	}
 
 	const int64_t batch = static_cast<int64_t>(rgb_u8_hwc.size());
-	// Shape input OCR dạng su dùng: [N,H,W,3] (NHWC).
+	// Shape input OCR dạng sử dụng: [N,H,W,3] (NHWC).
 	const std::vector<int64_t> run_input_shape = {batch, h, w, 3};
-	// per: so byte/pixel elements cua 1 anh RGB HWC.
+	// per: số byte/pixel elements của 1 ảnh RGB HWC.
 	const size_t per = static_cast<size_t>(h) * static_cast<size_t>(w) * 3ull;
 	std::vector<uint8_t> input;
 	input.resize(static_cast<size_t>(batch) * per);
 	for (size_t i = 0; i < rgb_u8_hwc.size(); ++i) {
-		// Layout NHWC uint8: copy lien tiep tung anh vào vung batch.
+		// Layout NHWC uint8: copy liên tiếp từng ảnh vào vùng batch.
 		std::memcpy(input.data() + i * per, rgb_u8_hwc[i].data, per);
 	}
 
@@ -328,7 +328,7 @@ std::vector<OcrText> RunBatch(
 		run_input_shape.size());
 
 	const std::vector<const char*> input_names = {meta->input_name.c_str()};
-	// outputs gom toàn bộ output nodes, nhung decode chu yeu output[0].
+	// outputs gồm toàn bộ output nodes, nhưng decode chủ yếu output[0].
 	auto outputs = session.Run(
 		Ort::RunOptions{nullptr},
 		input_names.data(),
@@ -338,18 +338,18 @@ std::vector<OcrText> RunBatch(
 		meta->output_names.size());
 
 	Ort::Value& out0 = outputs.at(0);
-	// decoded la kết quả argmax + conf theo tung sample trong batch.
+	// decoded là kết quả argmax + conf theo từng sample trong batch.
 	auto decoded = DecodeBatchOutput(out0);
-	// blank_index la vi tri token blank CTC trong alphabet.
+	// blank_index là vị trí token blank CTC trong alphabet.
 	const int64_t blank_index = static_cast<int64_t>(alphabet.size()) - 1;
 
 	std::vector<OcrText> texts;
 	texts.reserve(decoded.size());
 	for (auto& one : decoded) {
 		OcrText t;
-		// Postprocess CTC: collapse + loai blank -> chuoi bịển số.
+		// Postprocess CTC: collapse + loại blank -> chuỗi biển số.
 		t.text = post_process_out_string::PostprocessIndicesToString(one.indices, alphabet, blank_index);
-		// conf_avg được tinh tren ký tự non-blank để phan anh độ tin cậy text thuc.
+		// conf_avg được tính trên ký tự non-blank để phản ánh độ tin cậy text thực.
 		t.conf_avg = ComputeAvgConfNonBlank(one.indices, one.conf, blank_index);
 		texts.push_back(std::move(t));
 	}

@@ -64,7 +64,7 @@ std::shared_ptr<const SessionIoNames> GetSessionIoNames(Ort::Session& session) {
 	auto built = std::make_shared<SessionIoNames>();
 	// Lấy tên input node thứ 0 từ graph ONNX.
 	// ONNX Runtime trả về kiểu AllocatedStringPtr, phải copy sang std::string
-	// để tên còn hợp lệ sau khi bịến tạm bị hủy.
+	// để tên còn hợp lệ sau khi biến tạm bị hủy.
 	auto input_name_alloc = session.GetInputNameAllocated(0, allocator);
 	built->input_name = input_name_alloc.get();
 
@@ -103,7 +103,7 @@ std::shared_ptr<const SessionIoNames> GetSessionIoNames(Ort::Session& session) {
 /**
  * @brief Chạy suy luận cho một batch liên tục (không tách chunk).
  *
- * @param session Session ONNX Runtime cua model YOLO.
+ * @param session Session ONNX Runtime của model YOLO.
  * @param bgr_images Danh sách ảnh BGR đầu vào.
  * @param conf_threshold Ngưỡng confidence lọc detection.
  * @param nms_iou_threshold Ngưỡng IoU cho NMS.
@@ -149,7 +149,7 @@ std::vector<std::vector<Detection>> RunBatchNoSplit(
 		workers.reserve(worker_count);
 		for (size_t w = 0; w < worker_count; ++w) {
 			// Mỗi worker chạy cùng một hàm lambda với cơ chế lấy việc động.
-			// Capture [&] để dùng chung các bịến: next_index, rgbs, infos, bgr_images...
+			// Capture [&] để dùng chung các biến: next_index, rgbs, infos, bgr_images...
 			workers.emplace_back([&]() {
 				while (true) {
 					// fetch_add trả về index hiện tại rồi tăng lên 1 cho lần kế tiếp.
@@ -269,15 +269,6 @@ std::vector<std::vector<Detection>> RunBatchNoSplit(
 
 // ── Public API ────────────────────────────────────────────────────────
 
-/**
- * @brief API detect batch, tự xử lý model fixed-batch bằng cách tách chunk.
- *
- * @param session Session ONNX Runtime cua model YOLO.
- * @param bgr_images Danh sách ảnh BGR đầu vào.
- * @param conf_threshold Ngưỡng confidence lọc detection.
- * @param nms_iou_threshold Ngưỡng IoU cho NMS.
- * @return std::vector<std::vector<Detection>> Detection theo thứ tự đầu vào.
- */
 std::vector<std::vector<Detection>> RunBatch(
 	Ort::Session& session,
 	const std::vector<cv::Mat>& bgr_images,
@@ -323,15 +314,6 @@ std::vector<std::vector<Detection>> RunBatch(
 	return RunBatchNoSplit(session, bgr_images, conf_threshold, nms_iou_threshold);
 }
 
-/**
- * @brief API detect cho một ảnh đơn.
- *
- * @param session Session ONNX Runtime cua model YOLO.
- * @param bgr_image Anh BGR đầu vào.
- * @param conf_threshold Ngưỡng confidence lọc detection.
- * @param nms_iou_threshold Ngưỡng IoU cho NMS.
- * @return std::vector<Detection> Danh sách detection của ảnh đầu vào.
- */
 std::vector<Detection> RunSingle(
 	Ort::Session& session,
 	const cv::Mat& bgr_image,

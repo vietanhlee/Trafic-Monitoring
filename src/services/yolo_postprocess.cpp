@@ -1,6 +1,6 @@
 /**
  * @file yolo_postprocess.cpp
- * @brief Trien khai parse output YOLO, map bbox về anh goc va hoan tắt NMS.
+ * @brief Triển khai parse output YOLO, map bbox về ảnh gốc và hoàn tất NMS.
  */
 #include "ocrplate/services/yolo_detector_internal.h"
 
@@ -17,18 +17,18 @@ namespace detail {
 namespace {
 
 /**
- * @brief Hoan tắt danh sach detection sau loc score bang NMS hoặc top-1 mode.
+ * @brief Hoàn tất danh sách detection sau lọc score bằng NMS hoặc top-1 mode.
  *
- * @param dets Danh sach detection trước khi finalize.
+ * @param dets Danh sách detection trước khi finalize.
  * @param nms_iou_threshold Ngưỡng IoU NMS; <=0 thi giu top-1.
- * @return std::vector<Detection> Danh sach detection sau finalize.
+ * @return std::vector<Detection> Danh sách detection sau finalize.
  */
 std::vector<Detection> FinalizeDetections(std::vector<Detection> dets, float nms_iou_threshold) {
 	if (dets.empty()) {
 		return {};
 	}
 
-	// No-NMS mode: chi giu 1 bbox co score cao nhất cho moi anh.
+	// No-NMS mode: chỉ giữ 1 bbox có score cao nhất cho mỗi ảnh.
 	if (nms_iou_threshold <= 0.0f) {
 		auto best_it = std::max_element(dets.begin(), dets.end(), [](const Detection& a, const Detection& b) {
 			return a.score < b.score;
@@ -43,16 +43,9 @@ std::vector<Detection> FinalizeDetections(std::vector<Detection> dets, float nms
 
 // ── Geometry helpers ──────────────────────────────────────────────────
 
-/**
- * @brief Map bbox tu he tọa độ letterbox về he tọa độ anh goc.
- *
- * @param in BBox trong he tọa độ input model.
- * @param info Thong tin letterbox cua anh do.
- * @return Detection BBox da map về anh goc.
- */
 Detection MapBackToOriginal(const Detection& in, const LetterboxInfo& info) {
 	Detection out = in;
-	// Hoan tac letterbox: bo padding va chia theo scale để về tọa độ anh goc.
+	// Hoàn tác letterbox: bỏ padding và chia theo scale để về tọa độ ảnh gốc.
 	out.x1 = (out.x1 - static_cast<float>(info.pad_x)) / info.scale;
 	out.y1 = (out.y1 - static_cast<float>(info.pad_y)) / info.scale;
 	out.x2 = (out.x2 - static_cast<float>(info.pad_x)) / info.scale;
@@ -73,12 +66,12 @@ Detection MapBackToOriginal(const Detection& in, const LetterboxInfo& info) {
 /**
  * @brief Parse output YOLO layout chuan (batch, channels, anchors).
  *
- * @param data Con tro dữ liệu float output tensor.
- * @param batch So anh trong batch.
+ * @param data Con trỏ dữ liệu float output tensor.
+ * @param batch Số ảnh trong batch.
  * @param channels So channel output (4 + num_classes).
  * @param num_anchors So anchor/prediction points.
- * @param infos Metadata letterbox theo tung anh.
- * @param conf_threshold Ngưỡng confidence loc detection.
+ * @param infos Metadata letterbox theo từng ảnh.
+ * @param conf_threshold Ngưỡng confidence lọc detection.
  * @param nms_iou_threshold Ngưỡng IoU cho NMS.
  * @return std::vector<std::vector<Detection>> Detection theo batch.
  */
@@ -114,7 +107,7 @@ static std::vector<std::vector<Detection>> ParseStandardYOLO(
 			}
 
 			if (!(best_score >= conf_threshold)) {
-				// Cat ngưỡng score trước NMS để giảm so luong box xu ly.
+				// Cắt ngưỡng score trước NMS để giảm số lượng box xử lý.
 				continue;
 			}
 
@@ -140,37 +133,28 @@ static std::vector<std::vector<Detection>> ParseStandardYOLO(
 
 			Detection mapped = MapBackToOriginal(det, info);
 			if (mapped.x2 <= mapped.x1 || mapped.y2 <= mapped.y1) {
-				// Loai bo box suy bien sau khi map nguoc.
+				// Loại bỏ box suy biến sau khi map ngược.
 				continue;
 			}
 			dets.push_back(mapped);
 		}
 
 		all[static_cast<size_t>(n)] = FinalizeDetections(std::move(dets), nms_iou_threshold);
-		// NMS mode: ap NMS theo tung anh trong batch.
-		// No-NMS mode: chi giu top-1 detection theo score.
+		// NMS mode: áp NMS theo từng ảnh trong batch.
+		// No-NMS mode: chỉ giữ top-1 detection theo score.
 	}
 	return all;
 }
 
 // ── ParseOutput: auto-detect output format ────────────────────────────
 
-/**
- * @brief Parse output tensor YOLO theo nhiều layout có thể gap.
- *
- * @param out0 Tensor output dau tien cua model.
- * @param infos Metadata letterbox theo tung anh input.
- * @param conf_threshold Ngưỡng confidence loc detection.
- * @param nms_iou_threshold Ngưỡng IoU cho NMS.
- * @return std::vector<std::vector<Detection>> Detection theo tung anh.
- */
 std::vector<std::vector<Detection>> ParseOutput(
 		Ort::Value& out0,
 		const std::vector<LetterboxInfo>& infos,
 		float conf_threshold,
 		float nms_iou_threshold) {
 	if (!out0.IsTensor()) {
-		throw std::runtime_error("YOLO output[0] không phai tensor");
+		throw std::runtime_error("YOLO output[0] không phải tensor");
 	}
 	auto type_info = out0.GetTensorTypeAndShapeInfo();
 	const auto shape = type_info.GetShape();
@@ -188,18 +172,18 @@ std::vector<std::vector<Detection>> ParseOutput(
 		dim1 = shape[0];
 		dim2 = shape[1];
 	} else {
-		throw std::runtime_error("YOLO output shape không hop le (cần rank 2/3), rank=" + std::to_string(shape.size()));
+		throw std::runtime_error("YOLO output shape không hợp lệ (cần rank 2/3), rank=" + std::to_string(shape.size()));
 	}
 
 	if (static_cast<size_t>(batch) != infos.size()) {
-		// infos được tao tu preprocess theo so anh input, phai khớp batch output.
+		// infos được tạo từ preprocess theo số ảnh input, phải khớp batch output.
 		throw std::runtime_error("YOLO output batch != so anh input");
 	}
 
 	std::vector<float> fp32_buffer;
 	const float* data = nullptr;
 	if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-		// data tro truc tiep vào bộ nhớ tensor float32 cua ORT.
+		// data trỏ trực tiếp vào bộ nhớ tensor float32 của ORT.
 		data = out0.GetTensorData<float>();
 	} else if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
 		const auto* fp16 = out0.GetTensorData<Ort::Float16_t>();
@@ -225,7 +209,7 @@ std::vector<std::vector<Detection>> ParseOutput(
 	const bool is_standard_yolo = (dim1 < dim2 && dim1 >= 5);
 
 	if (is_standard_yolo) {
-		// Fast-path cho layout output pho bien (batch, channels, anchors).
+		// Fast-path cho layout output phổ biến (batch, channels, anchors).
 		return ParseStandardYOLO(data, batch, dim1, dim2, infos, conf_threshold, nms_iou_threshold);
 	}
 
@@ -242,7 +226,7 @@ std::vector<std::vector<Detection>> ParseOutput(
 		all.resize(static_cast<size_t>(batch));
 
 		for (int64_t n = 0; n < batch; ++n) {
-			// bdata tro den block [num_anchors, channels] cua sample n.
+			// bdata trỏ đến block [num_anchors, channels] của sample n.
 			const float* bdata = data + n * num_anchors * channels;
 			const auto& info = infos[static_cast<size_t>(n)];
 			std::vector<Detection> dets;
