@@ -51,22 +51,22 @@ struct PolygonPickerState {
 };
 
 struct GateLineSelection {
-	// Diem dau gate line trong he tọa độ local ROI.
+	// Điểm đầu gate line trong hệ tọa độ local ROI.
 	cv::Point p1_local{0, 0};
-	// Diem cuoi gate line trong he tọa độ local ROI.
+	// Điểm cuối gate line trong hệ tọa độ local ROI.
 	cv::Point p2_local{0, 0};
-	// true nếu gate line được chon hop le.
+	// true nếu gate line được chọn hợp lệ.
 	bool enabled = false;
 };
 
 struct GateLinePickerState {
-	// Danh sach diem click khi user chon gate line (tối đa 2 diem).
+	// Danh sách điểm click khi user chọn gate line (tối đa 2 điểm).
 	std::vector<cv::Point> points;
-	// Vi tri hover cua chuot để về line preview.
+	// Vị trí hover của chuột để vẽ line preview.
 	cv::Point hover{-1, -1};
 };
 
-// Xu ly su kien chuot khi người dùng về polygon vung lam viec.
+// Xử lý sự kiện chuột khi người dùng vẽ polygon vùng làm việc.
 void OnPolygonPickMouse(int event, int x, int y, int /*flags*/, void* userdata) {
 	auto* st = static_cast<PolygonPickerState*>(userdata);
 	if (st == nullptr) {
@@ -82,7 +82,7 @@ void OnPolygonPickMouse(int event, int x, int y, int /*flags*/, void* userdata) 
 	}
 }
 
-// Xu ly su kien chuot khi người dùng chon 2 diem tao duong ranh.
+// Xử lý sự kiện chuột khi người dùng chọn 2 điểm tạo đường ranh.
 void OnGateLinePickMouse(int event, int x, int y, int /*flags*/, void* userdata) {
 	auto* st = static_cast<GateLinePickerState*>(userdata);
 	if (st == nullptr) {
@@ -98,11 +98,11 @@ void OnGateLinePickMouse(int event, int x, int y, int /*flags*/, void* userdata)
 	st->points.emplace_back(x, y);
 }
 
-// Tao WorkingArea tu da giac tuy chon; fallback toan frame nếu polygon không hop le.
+// Tạo WorkingArea từ đa giác tùy chọn; fallback toàn frame nếu polygon không hợp lệ.
 WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::vector<cv::Point>& polygon_abs) {
 	WorkingArea area;
 	if (polygon_abs.size() < 3) {
-		// Polygon không hop le -> coi nhu toàn bộ frame la vung xu ly.
+		// Polygon không hợp lệ -> coi như toàn bộ frame là vùng xử lý.
 		area.bbox = cv::Rect(0, 0, frame_size.width, frame_size.height);
 		area.polygon_abs = {
 			cv::Point(0, 0),
@@ -116,7 +116,7 @@ WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::v
 	}
 
 	cv::Rect raw = cv::boundingRect(polygon_abs);
-	// Clamp để dam bao bbox nam trong kích thước frame, tranh truy cap out-of-bound.
+	// Clamp để đảm bảo bbox nằm trong kích thước frame, tránh truy cập out-of-bound.
 	const int x = std::max(0, std::min(raw.x, frame_size.width - 1));
 	const int y = std::max(0, std::min(raw.y, frame_size.height - 1));
 	const int w = std::max(1, std::min(raw.width, frame_size.width - x));
@@ -134,7 +134,7 @@ WorkingArea BuildWorkingAreaFromPolygon(const cv::Size& frame_size, const std::v
 	return area;
 }
 
-// Hiện giao dien để người dùng chon vung infer theo da giac.
+// Hiện giao diện để người dùng chọn vùng infer theo đa giác.
 WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 	const std::string win = "Chon vung da giac tracking";
 	PolygonPickerState state;
@@ -146,7 +146,7 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 		cv::Mat canvas = first_frame.clone();
 
 		if (!state.points.empty()) {
-			// Vẽ preview da giac dạng tao (fill + canh + diem neo) để người dùng quan sát.
+			// Vẽ preview đa giác đang tạo (fill + cạnh + điểm neo) để người dùng quan sát.
 			cv::Mat overlay = canvas.clone();
 			std::vector<std::vector<cv::Point>> poly_fill{state.points};
 			if (state.points.size() >= 3) {
@@ -173,7 +173,7 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 
 		cv::imshow(win, canvas);
 		const int key = cv::waitKey(16);
-		// ESC: bỏ qua, C: clear, U: undo, Enter/Space: xac nhan polygon.
+		// ESC: bỏ qua, C: clear, U: undo, Enter/Space: xác nhận polygon.
 		if (key == 27) {
 			cv::destroyWindow(win);
 			return BuildWorkingAreaFromPolygon(first_frame.size(), {});
@@ -197,7 +197,7 @@ WorkingArea SelectWorkingPolygon(const cv::Mat& first_frame) {
 	}
 }
 
-// Hiện giao dien để người dùng chon 1 duong ranh (2 diem) để gate predict.
+// Hiện giao diện để người dùng chọn 1 đường ranh (2 điểm) để gate predict.
 GateLineSelection SelectGateLine(const cv::Mat& first_frame, const WorkingArea& area) {
 	// Tên cửa sổ hiển thị để chọn line.
 	const std::string win = "Chon duong ranh trigger predict";
@@ -275,7 +275,7 @@ void DrawWorkingAreaOverlay(cv::Mat& frame, const WorkingArea& area) {
 	cv::fillPoly(overlay, poly, cv::Scalar(50, 190, 80), cv::LINE_AA);
 	cv::addWeighted(overlay, 0.10, frame, 0.90, 0.0, frame);
 
-	// Vien ngoai dam + vien trong sang để để nhin tren nen phuc tap.
+	// Viền ngoài đậm + viền trong sáng để nhìn trên nền phức tạp.
 	cv::polylines(frame, poly, true, cv::Scalar(0, 0, 0), 3, cv::LINE_AA);
 	cv::polylines(frame, poly, true, cv::Scalar(120, 255, 170), 2, cv::LINE_AA);
 
@@ -311,7 +311,7 @@ void DrawGateLineOverlay(cv::Mat& frame, const WorkingArea& area, const GateLine
 	cv::putText(frame, "PREDICT GATE LINE", cv::Point(anchor.x + 4, anchor.y), cv::FONT_HERSHEY_SIMPLEX, 0.48, cv::Scalar(170, 235, 255), 1, cv::LINE_AA);
 }
 
-// Xu ly 1 anh don: infer, annotate, luu/hiện thi kết quả va tra về ma trang thai.
+// Xử lý 1 ảnh đơn: infer, annotate, lưu/hiển thị kết quả và trả về mã trạng thái.
 int ProcessOneImage(
 	const fs::path& image_path,
 	Ort::Session& vehicle_sess,
@@ -371,7 +371,7 @@ int ProcessOneImage(
 	return 0;
 }
 
-// Xu ly 1 video: infer theo chu ky frame, tracking liên tục va xuat video annotate.
+// Xử lý 1 video: infer theo chu kỳ frame, tracking liên tục và xuất video annotate.
 int ProcessOneVideo(
 	const fs::path& video_path,
 	Ort::Session& vehicle_sess,
@@ -402,12 +402,12 @@ int ProcessOneVideo(
 	std::condition_variable display_cv;
 	std::deque<cv::Mat> display_queue;
 	std::thread display_thread;
-	// Gioi han so frame cho queue preview để tranh tang do tre hiện thi.
+	// Giới hạn số frame cho queue preview để tránh tăng độ trễ hiển thị.
 	const size_t max_display_queue = static_cast<size_t>(std::max(1, app_config::kVideoDisplayQueueSize));
 
 	auto MakeDisplayFrame = [](const cv::Mat& src) {
 		const int max_w = std::max(1, app_config::kVideoPreviewMaxWidth);
-		// Chi resize khi cần để giảm chi phí copy/scale tren frame nho.
+		// Chỉ resize khi cần để giảm chi phí copy/scale trên frame nhỏ.
 		if (src.cols <= max_w) {
 			return src.clone();
 		}
@@ -422,7 +422,7 @@ int ProcessOneVideo(
 		throw std::runtime_error("Video không co frame hop le: " + video_path.string());
 	}
 
-	// Chon vung da giac lam viec ngay tu dau, sau đó chi infer/draw trong vung nay.
+	// Chọn vùng đa giác làm việc ngay từ đầu, sau đó chỉ infer/draw trong vùng này.
 	const WorkingArea work_area = SelectWorkingPolygon(frame);
 	std::cout << "Vung xu ly: x=" << work_area.bbox.x
 		<< " y=" << work_area.bbox.y
@@ -447,7 +447,7 @@ int ProcessOneVideo(
 				cv::Mat frame_to_show;
 				{
 					std::unique_lock<std::mutex> lock(display_mutex);
-					// Display thread ngu den khi co frame moi hoặc co lenh dùng.
+					// Display thread ngủ đến khi có frame mới hoặc có lệnh dừng.
 					display_cv.wait(lock, [&]() {
 						return stop_requested.load(std::memory_order_relaxed) || !display_queue.empty();
 					});
@@ -458,7 +458,7 @@ int ProcessOneVideo(
 						continue;
 					}
 					frame_to_show = std::move(display_queue.back());
-					// Chi giu frame moi nhất để uu tien realtime thay vi hiện frame cu.
+					// Chỉ giữ frame mới nhất để ưu tiên realtime thay vì hiện frame cũ.
 					display_queue.clear();
 				}
 
@@ -478,7 +478,7 @@ int ProcessOneVideo(
 
 	double input_fps = cap.get(cv::CAP_PROP_FPS);
 	if (input_fps <= 0.0) {
-		// Fallback cho video không co metadata FPS hop le.
+		// Fallback cho video không có metadata FPS hợp lệ.
 		input_fps = 30.0;
 	}
 
@@ -490,9 +490,9 @@ int ProcessOneVideo(
 	std::deque<cv::Mat> writer_queue;
 	std::thread writer_thread;
 	std::atomic<bool> writer_stop{ false };
-	// Hang doi writer co gioi han để tranh phinh bộ nhớ khi infer cham.
+	// Hàng đợi writer có giới hạn để tránh phình bộ nhớ khi infer chậm.
 	constexpr size_t kMaxWriterQueue = 8;
-	// Dem so frame bị bỏ qua khi uu tien realtime.
+	// Đếm số frame bị bỏ qua khi ưu tiên realtime.
 	size_t dropped_writer_frames = 0;
 	if (save_output) {
 		out_path = kOutputDir / (video_path.stem().string() + "_annotated.mp4");
@@ -511,7 +511,7 @@ int ProcessOneVideo(
 				bool popped = false;
 				{
 					std::unique_lock<std::mutex> lock(writer_mutex);
-					// Writer thread ngu den khi co frame cần ghi hoặc nhan tin hieu ket thuc.
+					// Writer thread ngủ đến khi có frame cần ghi hoặc nhận tín hiệu kết thúc.
 					writer_cv.wait(lock, [&]() {
 						return writer_stop.load(std::memory_order_relaxed) || !writer_queue.empty();
 					});
@@ -528,25 +528,25 @@ int ProcessOneVideo(
 				if (popped) {
 					writer_cv.notify_one();
 				}
-				// Ghi I/O tach rieng thread để không chan vong infer.
+				// Ghi I/O tách riêng thread để không chặn vòng infer.
 				writer.write(frame_to_write);
 			}
 		});
 	}
 
 	size_t frame_count = 0;
-	// Tong thời gian infer thuan (không tinh render/IO) để thống kê cuoi video.
+	// Tổng thời gian infer thuần (không tính render/IO) để thống kê cuối video.
 	double total_infer_sec = 0.0;
-	// So lan infer thuc te da chạy.
+	// Số lần infer thực tế đã chạy.
 	size_t infer_count = 0;
-	// FPS EMA để hiện thi on định hon FPS tuc thoi.
+	// FPS EMA để hiển thị ổn định hơn FPS tức thời.
 	double fps_ema = 0.0;
 	constexpr double kFpsEmaAlpha = 0.15;
 	// Timestamp đầu vòng lặp của lần infer gần nhất (để tính interval giữa 2 infer)
 	auto prev_infer_loop_start = std::chrono::steady_clock::now();
 	bool has_prev_infer = false;
 	FrameOverlayResult cached_overlay;
-	// Co overlay hop le để tai su dùng cho cac frame skip infer hay không.
+	// Có overlay hợp lệ để tái sử dụng cho các frame skip infer hay không.
 	bool has_cached_overlay = false;
 	TrackingRuntimeContext tracking_ctx;
 	tracking_ctx.enable_predict_on_line_cross = gate_line.enabled;
@@ -582,21 +582,21 @@ int ProcessOneVideo(
 			prev_infer_loop_start = loop_start;
 			has_prev_infer = true;
 
-			// Moc bật dau infer cua frame nay (chi tinh phan infer).
+			// Mốc bắt đầu infer của frame này (chỉ tính phần infer).
 			auto infer_t0 = std::chrono::steady_clock::now();
 			try {
-				// work_view la view ROI theo bbox, không copy dữ liệu goc.
+				// work_view là view ROI theo bbox, không copy dữ liệu gốc.
 				cv::Mat work_view = frame(work_area.bbox);
-				// infer_input la anh đầu vào thuc te cua pipeline (co/không ap mask polygon).
+				// infer_input là ảnh đầu vào thực tế của pipeline (có/không áp mask polygon).
 				cv::Mat infer_input;
 				if (work_area.enabled) {
-					// Nếu co polygon: mask ROI để model chi nhin vung quan tam.
+					// Nếu có polygon: mask ROI để model chỉ nhìn vùng quan tâm.
 					work_view.copyTo(infer_input);
 					cv::Mat masked;
 					cv::bitwise_and(infer_input, infer_input, masked, work_area.mask_local);
 					infer_input = std::move(masked);
 				} else {
-					// Không co polygon: infer truc tiep tren ROI toan frame/bbox.
+					// Không có polygon: infer trực tiếp trên ROI toàn frame/bbox.
 					infer_input = work_view;
 				}
 				has_cached_overlay = InferFrameOverlay(
@@ -608,7 +608,7 @@ int ProcessOneVideo(
 					cached_overlay,
 					false,
 					&tracking_ctx);
-				// Moc ket thuc infer để cong don thống kê thời gian.
+				// Mốc kết thúc infer để cộng dồn thống kê thời gian.
 				auto infer_t1 = std::chrono::steady_clock::now();
 				total_infer_sec += std::chrono::duration<double>(infer_t1 - infer_t0).count();
 				++infer_count;
@@ -626,16 +626,16 @@ int ProcessOneVideo(
 
 		DrawFps(frame, display_fps);
 		if (save_output) {
-			// Clone để writer thread so huu ban rieng, tranh data race voi frame hiện tại.
+			// Clone để writer thread sở hữu bản riêng, tránh data race với frame hiện tại.
 			cv::Mat writer_frame = frame.clone();
 			{
 				std::unique_lock<std::mutex> lock(writer_mutex);
 				if (show_output && writer_queue.size() >= kMaxWriterQueue) {
-					// Uu tien realtime: bo frame cu nếu queue day khi dạng show.
+					// Ưu tiên realtime: bỏ frame cũ nếu queue đầy khi đang show.
 					writer_queue.pop_front();
 					++dropped_writer_frames;
 				} else {
-					// Chế độ không show: cho queue rong bot để han che mất frame.
+					// Chế độ không show: chờ queue rỗng bớt để hạn chế mất frame.
 					while (writer_queue.size() >= kMaxWriterQueue && !stop_requested.load(std::memory_order_relaxed)) {
 						writer_cv.wait_for(lock, std::chrono::milliseconds(2));
 					}
@@ -645,12 +645,12 @@ int ProcessOneVideo(
 			writer_cv.notify_one();
 		}
 		if (show_output) {
-			// Tao frame preview da scale để giảm tai GUI thread.
+			// Tạo frame preview đã scale để giảm tải GUI thread.
 			cv::Mat display_frame = MakeDisplayFrame(frame);
 			{
 				std::lock_guard<std::mutex> lock(display_mutex);
 				display_queue.emplace_back(std::move(display_frame));
-				// Chan queue display phinh to: luôn cat frame cu nhất khi vuot ngưỡng.
+				// Chặn queue display phình to: luôn cắt frame cũ nhất khi vượt ngưỡng.
 				while (display_queue.size() > max_display_queue) {
 					display_queue.pop_front();
 				}
@@ -699,19 +699,19 @@ int ProcessOneVideo(
 	return 0;
 }
 
-// Diem vào chuong trinh: parse CLI, nap model, chon mode image/folder/video va thuc thi.
+// Điểm vào chương trình: parse CLI, nạp model, chọn mode image/folder/video và thực thi.
 int main(int argc, char** argv) {
 	try {
-		// Đường dẫn model được lấy tập trung tu app_config.
+		// Đường dẫn model được lấy tập trung từ app_config.
 		const fs::path vehicle_model_path = app_config::kVehicleModelPath;
 		const fs::path plate_model_path = app_config::kPlateModelPath;
 		const fs::path brand_model_path = app_config::kBrandCarModelPath;
 		const fs::path ocr_model_path = app_config::kOcrModelPath;
-		// Cac bien mode input se được parse tu CLI.
+		// Các biến mode input sẽ được parse từ CLI.
 		fs::path image_path;
 		fs::path folder_path;
 		fs::path video_path;
-		// Co luu output va co hiện preview hay không.
+		// Có lưu output và có hiện preview hay không.
 		bool save_output = true;
 		bool show_output = false;
 		try {

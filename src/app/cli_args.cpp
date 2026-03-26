@@ -37,11 +37,11 @@ void PrintUsage(const char* argv0, std::ostream& os) {
 		<< "  - --nosave: không lưu file output (chỉ hợp lệ khi dùng với --image hoặc --video)\n";
 }
 
-// Parse va validate tham số CLI; nem exception nếu tham số không hop le.
+// Parse và validate tham số CLI; ném exception nếu tham số không hợp lệ.
 Options Parse(int argc, char** argv) {
 	Options opt;
 	for (int i = 1; i < argc; ++i) {
-		// a la token CLI hiện tại dạng được phan tich.
+		// a là token CLI hiện tại đang được phân tích.
 		std::string a = argv[i];
 		if ((a == "--image" || a == "-i") && i + 1 < argc) {
 			opt.image_path = argv[++i];
@@ -63,7 +63,7 @@ Options Parse(int argc, char** argv) {
 		}
 	}
 
-	// mode_count dùng để dam bao user chi chon DUNG 1 mode chạy.
+	// mode_count dùng để đảm bảo user chỉ chọn đúng 1 mode chạy.
 	int mode_count = 0;
 	mode_count += opt.image_path.empty() ? 0 : 1;
 	mode_count += opt.folder_path.empty() ? 0 : 1;
@@ -80,7 +80,7 @@ Options Parse(int argc, char** argv) {
 		}
 	}
 	if (mode_count == 0) {
-		// giu hanh vi cu: cho phep fallback anh mac định trong main
+		// Giữ hành vi cũ: cho phép fallback ảnh mặc định trong main.
 	}
 	return opt;
 }
