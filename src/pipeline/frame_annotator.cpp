@@ -81,7 +81,7 @@ cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
 }
 
 bool IsPointAboveGateLine(const cv::Point& p, const cv::Point& p1, const cv::Point& p2) {
-	// Chuẩn hóa hướng line theo trục x để quy ước "phia tren" on định.
+	// Chuẩn hóa hướng line theo trục x để quy ước "phía trên" ổn định.
 	cv::Point a = p1;
 	cv::Point b = p2;
 	if (a.x > b.x || (a.x == b.x && a.y > b.y)) {
@@ -91,13 +91,13 @@ bool IsPointAboveGateLine(const cv::Point& p, const cv::Point& p1, const cv::Poi
 	const long long dx = static_cast<long long>(b.x) - static_cast<long long>(a.x);
 	const long long dy = static_cast<long long>(b.y) - static_cast<long long>(a.y);
 	if (dx == 0) {
-		// Trường hợp line dùng: quy ước "tren" la y nhỏ hon diem cao hon cua line.
+		// Trường hợp line đứng: quy ước "trên" là y nhỏ hơn điểm cao hơn của line.
 		return p.y < std::min(a.y, b.y);
 	}
 
 	const long long cross = dx * (static_cast<long long>(p.y) - static_cast<long long>(a.y))
 		- dy * (static_cast<long long>(p.x) - static_cast<long long>(a.x));
-	// Hệ tọa độ ảnh: y hướng xuống dưới, nên cross < 0 tương ứng nam phia tren line.
+	// Hệ tọa độ ảnh: y hướng xuống dưới, nên cross < 0 tương ứng nằm phía trên line.
 	return cross < 0;
 }
 
@@ -109,7 +109,7 @@ cv::Point BottomLeftPointClamped(const yolo_detector::Detection& det, int w, int
 	return cv::Point(ix, iy);
 }
 
-// Vẽ bounding box bịển số + nhãn text OCR va độ tin cậy.
+// Vẽ bounding box biển số + nhãn text OCR và độ tin cậy.
 void DrawPlate(cv::Mat& bgr, const yolo_detector::Detection& det, const std::string& text, float conf_avg) {
 	const bool is_low_ocr_conf = (conf_avg < app_config::kOcrConfAvgThresh);
 	const cv::Scalar color = is_low_ocr_conf ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
@@ -142,7 +142,7 @@ void DrawPlate(cv::Mat& bgr, const yolo_detector::Detection& det, const std::str
 	cv::putText(bgr, label, cv::Point(x + 2, y), cv::FONT_HERSHEY_SIMPLEX, font_scale, cv::Scalar(0, 0, 0), thickness);
 }
 
-// Vẽ bounding box phương tiện + thông tin track, brand va plate da chap nhan.
+// Vẽ bounding box phương tiện + thông tin track, brand và plate đã chấp nhận.
 void DrawVehicle(
 	cv::Mat& bgr,
 	const yolo_detector::Detection& det,
@@ -203,19 +203,19 @@ void DrawVehicle(
 }
 
 struct PlatePipelineResult {
-	// Kết quả OCR theo tung plate candidate hop le.
+	// Kết quả OCR theo từng plate candidate hợp lệ.
 	std::vector<ocr_batch::OcrText> texts;
-	// BBox bịển số da map về he tọa độ anh goc.
+	// BBox biển số đã map về hệ tọa độ ảnh gốc.
 	std::vector<yolo_detector::Detection> plate_boxes_in_image;
-	// Chỉ số xe cha ung voi moi plate (index trong input vehicle_crops).
+	// Chỉ số xe cha ứng với mỗi plate (index trong input vehicle_crops).
 	std::vector<size_t> plate_vehicle_indices;
-	// Co/không co plate detect cho tung xe trong tap input.
+	// Có/không có plate detect cho từng xe trong tập input.
 	std::vector<bool> vehicle_has_plate;
-	// Danh dau nhánh co it nhất 1 bịển số hop le hay không.
+	// Đánh dấu nhánh có ít nhất 1 biển số hợp lệ hay không.
 	bool has_any_plate = false;
 };
 
-// Chạy nhánh detect plate + OCR tren danh sach crop xe, tra về kết quả da map về anh goc.
+// Chạy nhánh detect plate + OCR trên danh sách crop xe, trả về kết quả đã map về ảnh gốc.
 PlatePipelineResult RunPlatePipeline(
 	Ort::Session& plate_sess,
 	Ort::Session& ocr_sess,
@@ -224,28 +224,28 @@ PlatePipelineResult RunPlatePipeline(
 	PlatePipelineResult result;
 	result.vehicle_has_plate.assign(vehicle_rects.size(), false);
 
-	// 1) Detect bịển số trong tung crop phương tiện (da luong o plate_parallel).
+	// 1) Detect biển số trong từng crop phương tiện (đa luồng ở plate_parallel).
 	auto plates_per_vehicle = plate_parallel::DetectPlatesPerVehicleParallel(
 		plate_sess,
 		vehicle_crops,
 		app_config::kPlateConfThresh,
 		app_config::kPlateNmsIouThresh);
 
-	// 2) Loc box bịển số hop le va quy doi về candidate OCR.
+	// 2) Lọc box biển số hợp lệ và quy đổi về candidate OCR.
 	std::vector<plate_parallel::PlateCandidate> candidates = plate_parallel::BuildPlateCandidatesParallel(
 		plates_per_vehicle,
 		vehicle_crops,
 		app_config::kPlateConfThresh);
 
 	auto map_work = [&]() {
-		// Map box bịển số tu tọa độ trong crop xe về tọa độ tren anh goc.
-		// mapped: danh sach plate boxes tren khung hinh goc.
+		// Map box biển số từ tọa độ trong crop xe về tọa độ trên ảnh gốc.
+		// mapped: danh sách plate boxes trên khung hình gốc.
 		std::vector<yolo_detector::Detection> mapped;
-		// mapped_vehicle_indices: quan he plate -> vehicle index cua tap input.
+		// mapped_vehicle_indices: quan hệ plate -> vehicle index của tập input.
 		std::vector<size_t> mapped_vehicle_indices;
 		mapped.reserve(candidates.size());
 		mapped_vehicle_indices.reserve(candidates.size());
-		// has_plate danh dau nhánh xe nao detect được plate.
+		// has_plate đánh dấu nhánh xe nào detect được plate.
 		std::vector<bool> has_plate(vehicle_rects.size(), false);
 		for (const auto& c : candidates) {
 			const cv::Rect& vr = vehicle_rects[c.vehicle_index];
@@ -300,7 +300,7 @@ PlatePipelineResult RunPlatePipeline(
 
 } // namespace
 
-// Khoi tao context tracking (ByteTrack + identity store) voi cau hinh tu app_config.
+// Khởi tạo context tracking (ByteTrack + identity store) với cấu hình từ app_config.
 TrackingRuntimeContext::TrackingRuntimeContext()
 	: tracker(
 		app_config::kTrackerIouThreshold,
@@ -320,7 +320,7 @@ TrackingRuntimeContext::TrackingRuntimeContext()
 		  app_config::kPlateTextMinLen,
 		  app_config::kPlateTextMaxLen) {}
 
-// Vẽ FPS hiện tại len goc trai frame.
+// Vẽ FPS hiện tại lên góc trái frame.
 void DrawFps(cv::Mat& bgr, double fps) {
 	char fps_buf[64];
 	std::snprintf(fps_buf, sizeof(fps_buf), "FPS: %.2f", fps);
@@ -349,7 +349,7 @@ void DrawFps(cv::Mat& bgr, double fps) {
 		thickness);
 }
 
-// Infer 1 frame va dong gọi kết quả về vào overlay để có thể draw/caching.
+// Infer 1 frame và đóng gói kết quả vào overlay để có thể draw/caching.
 bool InferFrameOverlay(
 	const cv::Mat& bgr,
 	Ort::Session& vehicle_sess,
@@ -390,7 +390,7 @@ bool InferFrameOverlay(
 	for (const auto& v : vehicles) {
 		cv::Rect r = ToRectClamped(v.x1, v.y1, v.x2, v.y2, bgr.cols, bgr.rows);
 		if (r.width <= 2 || r.height <= 2) {
-			// Bỏ qua bbox qua nho vi OCR/plate detect thường không on định.
+			// Bỏ qua bbox quá nhỏ vì OCR/plate detect thường không ổn định.
 			continue;
 		}
 		vehicle_rects.push_back(r);
@@ -407,11 +407,11 @@ bool InferFrameOverlay(
 
 	std::vector<int> track_ids(vehicles_used.size(), -1);
 	if (tracking_ctx != nullptr) {
-		// Tracking cap ID ben vung theo frame, giup hop nhất plate/brand theo thời gian.
+		// Tracking cấp ID bền vững theo frame, giúp hợp nhất plate/brand theo thời gian.
 		track_ids = tracking_ctx->tracker.Update(vehicles_used);
 	}
 
-	// Gate runtime: cho moi xe, xác định co được phep chạy nhánh predict hay không.
+	// Gate runtime: cho mỗi xe, xác định có được phép chạy nhánh predict hay không.
 	std::vector<bool> allow_predict_by_line(vehicles_used.size(), true);
 	if (tracking_ctx != nullptr && tracking_ctx->enable_predict_on_line_cross) {
 		for (size_t i = 0; i < vehicles_used.size(); ++i) {
@@ -421,7 +421,7 @@ bool InferFrameOverlay(
 				continue;
 			}
 			const cv::Point bottom_left = BottomLeftPointClamped(vehicles_used[i], bgr.cols, bgr.rows);
-			// Chi check mot phia cua line: dùng diem day-trai bbox o frame hiện tại.
+			// Chỉ check một phía của line: dùng điểm đáy-trái bbox ở frame hiện tại.
 			allow_predict_by_line[i] = IsPointAboveGateLine(
 				bottom_left,
 				tracking_ctx->gate_line_p1,
@@ -429,10 +429,10 @@ bool InferFrameOverlay(
 		}
 	}
 
-	// need_brand_indices/crops: tap con xe cần classify brand o frame nay.
+	// need_brand_indices/crops: tập con xe cần classify brand ở frame này.
 	std::vector<size_t> need_brand_indices;
 	std::vector<cv::Mat> need_brand_crops;
-	// need_plate_indices/crops/rects: tap con xe cần detect plate + OCR.
+	// need_plate_indices/crops/rects: tập con xe cần detect plate + OCR.
 	std::vector<size_t> need_plate_indices;
 	std::vector<cv::Mat> need_plate_crops;
 	std::vector<cv::Rect> need_plate_rects;
@@ -442,7 +442,7 @@ bool InferFrameOverlay(
 	for (size_t i = 0; i < vehicles_used.size(); ++i) {
 		const bool allow_predict = allow_predict_by_line[i];
 		if (vehicles_used[i].cls == 0) {
-			// Brand chi ap dùng cho car va bỏ qua nếu track da co kết quả accepted.
+			// Brand chỉ áp dụng cho car và bỏ qua nếu track đã có kết quả accepted.
 			const bool has_brand = (tracking_ctx != nullptr) && tracking_ctx->identity_store.HasBrandResolved(track_ids[i]);
 			if (allow_predict && !has_brand) {
 				need_brand_indices.push_back(i);
@@ -452,7 +452,7 @@ bool InferFrameOverlay(
 
 		const bool has_plate = (tracking_ctx != nullptr) && tracking_ctx->identity_store.HasPlateAccepted(track_ids[i]);
 		if (allow_predict && !has_plate) {
-			// Chi infer plate/OCR cho track chưa co bịển số accepted để tiet kiem tai nguyen.
+			// Chỉ infer plate/OCR cho track chưa có biển số accepted để tiết kiệm tài nguyên.
 			need_plate_indices.push_back(i);
 			need_plate_crops.push_back(vehicle_crops[i]);
 			need_plate_rects.push_back(vehicle_rects[i]);
@@ -462,7 +462,7 @@ bool InferFrameOverlay(
 	std::vector<brand_classifier::BrandResult> car_brand_results;
 	PlatePipelineResult plate_result;
 	if (!need_brand_crops.empty() && !need_plate_crops.empty()) {
-		// Chạy song song 2 nhánh đọc lap để rut ngan độ trễ frame:
+		// Chạy song song 2 nhánh độc lập để rút ngắn độ trễ frame:
 		// - nhánh brand classify (chi xe hoi)
 		// - nhánh plate detect + OCR
 		auto brand_future = std::async(std::launch::async, [&]() {
@@ -487,27 +487,27 @@ bool InferFrameOverlay(
 		plate_result = RunPlatePipeline(plate_sess, ocr_sess, need_plate_crops, need_plate_rects);
 	}
 
-	// brand_id_per_vehicle luu kết quả tam theo toàn bộ vehicles_used.
+	// brand_id_per_vehicle lưu kết quả tạm theo toàn bộ vehicles_used.
 	std::vector<int> brand_id_per_vehicle(vehicles_used.size(), -1);
 	for (size_t k = 0; k < need_brand_indices.size() && k < car_brand_results.size(); ++k) {
 		const size_t vehicle_idx = need_brand_indices[k];
-		// Map kết quả classify về dùng vi tri xe ban dau.
+		// Map kết quả classify về đúng vị trí xe ban đầu.
 		brand_id_per_vehicle[vehicle_idx] = car_brand_results[k].class_id;
 		if (tracking_ctx != nullptr) {
 			tracking_ctx->identity_store.UpdateBrand(track_ids[vehicle_idx], car_brand_results[k].class_id, car_brand_results[k].conf);
 		}
 	}
 
-	// vehicle_has_plate la map kết quả detect plate theo toàn bộ vehicles_used.
+	// vehicle_has_plate là map kết quả detect plate theo toàn bộ vehicles_used.
 	std::vector<bool> vehicle_has_plate(vehicles_used.size(), false);
 	for (size_t sub_idx = 0; sub_idx < need_plate_indices.size(); ++sub_idx) {
 		const size_t global_idx = need_plate_indices[sub_idx];
 		if (sub_idx < plate_result.vehicle_has_plate.size()) {
-			// Map bool has_plate tu index subset về index toàn bộ vehicles_used.
+			// Map bool has_plate từ index subset về index toàn bộ vehicles_used.
 			vehicle_has_plate[global_idx] = plate_result.vehicle_has_plate[sub_idx];
 		}
 		if (tracking_ctx != nullptr && !vehicle_has_plate[global_idx]) {
-			// Không detect được plate o frame nay => van tinh 1 lan thu cho track.
+			// Không detect được plate ở frame này => vẫn tính 1 lần thử cho track.
 			tracking_ctx->identity_store.MarkPlateMiss(track_ids[global_idx]);
 		}
 	}
@@ -522,8 +522,8 @@ bool InferFrameOverlay(
 		}
 		const size_t global_vehicle_idx = need_plate_indices[sub_vehicle_idx];
 		if (tracking_ctx != nullptr) {
-			// Luu tich luy kết quả OCR vào identity store để chap nhan theo nhiều lan do.
-			// Luu y: update theo track_id cua xe cha sau khi map subset -> global index.
+			// Lưu tích lũy kết quả OCR vào identity store để chấp nhận theo nhiều lần đo.
+			// Lưu ý: update theo track_id của xe cha sau khi map subset -> global index.
 			tracking_ctx->identity_store.UpdatePlate(
 				track_ids[global_vehicle_idx],
 				plate_result.texts[plate_idx].text,
@@ -555,18 +555,18 @@ bool InferFrameOverlay(
 		const auto* iden = (tracking_ctx != nullptr) ? tracking_ctx->identity_store.Get(track_ids[i]) : nullptr;
 		VehicleOverlayResult v;
 		v.det = vehicles_used[i];
-		// Luôn hiện ID tu dau nếu dạng bật tracking; thuoc tinh (bịển số/hang) se cap nhất dần.
+		// Luôn hiện ID từ đầu nếu đang bật tracking; thuộc tính (biển số/hãng) sẽ cập nhật dần.
 		v.track_id = (tracking_ctx != nullptr) ? track_ids[i] : -1;
 		v.has_plate = vehicle_has_plate[i] || (iden != nullptr && iden->plate_accepted);
 		v.brand_id = (iden != nullptr && iden->brand_accepted) ? iden->brand_id : brand_id_per_vehicle[i];
 		if (iden != nullptr && iden->plate_accepted) {
-			// Hiện text da chap nhan (on định hon text OCR tung frame).
+			// Hiện text đã chấp nhận (ổn định hơn text OCR từng frame).
 			v.accepted_plate_text = iden->plate_text;
 		}
 		out_overlay.vehicles.push_back(v);
 	}
 
-	// Cap nhất trace (lich su tam bbox) theo track_id va dua vào overlay để có thể cache/draw lai.
+	// Cập nhật trace (lịch sử tâm bbox) theo track_id và đưa vào overlay để có thể cache/draw lại.
 	if (tracking_ctx != nullptr) {
 		UpdateTrackTraces(bgr, out_overlay.vehicles, *tracking_ctx, out_overlay.traces);
 	}
@@ -582,7 +582,7 @@ bool InferFrameOverlay(
 		const size_t global_vehicle_idx = need_plate_indices[sub_vehicle_idx];
 		PlateOverlayResult p;
 		p.det = plate_result.plate_boxes_in_image[i];
-		// Track ID gan theo xe cha để để truy vet tren UI/log.
+		// Track ID gán theo xe cha để truy vết trên UI/log.
 		p.track_id = track_ids[global_vehicle_idx];
 		p.text = plate_result.texts[i].text;
 		p.conf_avg = plate_result.texts[i].conf_avg;
@@ -619,7 +619,7 @@ bool InferFrameOverlay(
 	return true;
 }
 
-// Vẽ toàn bộ overlay (trace, xe, bịển số) len frame.
+// Vẽ toàn bộ overlay (trace, xe, biển số) lên frame.
 void DrawFrameOverlay(cv::Mat& bgr, const FrameOverlayResult& overlay) {
 	DrawTrackTraces(bgr, overlay.traces);
 	for (const auto& v : overlay.vehicles) {
@@ -630,7 +630,7 @@ void DrawFrameOverlay(cv::Mat& bgr, const FrameOverlayResult& overlay) {
 	}
 }
 
-// API muc cao: infer + về truc tiep len frame đầu vào.
+// API mức cao: infer + vẽ trực tiếp lên frame đầu vào.
 bool AnnotateFrame(
 	cv::Mat& bgr,
 	Ort::Session& vehicle_sess,
