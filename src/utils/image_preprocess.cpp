@@ -21,26 +21,26 @@ cv::Mat PreprocessMatRgbU8Hwc(const cv::Mat& bgr, int target_w, int target_h) {
     }
 
     cv::Mat rgb;
-    // Doi kenh mau về RGB để phù hợp cac model OCR/brand trong pipeline.
+    // Đổi kênh màu về RGB để phù hợp các model OCR/brand trong pipeline.
     cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
 
     cv::Mat resized;
-    // Dua về kích thước model yeu cau.
+    // Đưa về kích thước model yêu cầu.
     cv::resize(rgb, resized, cv::Size(target_w, target_h), 0.0, 0.0, cv::INTER_LINEAR);
 
     if (resized.type() != CV_8UC3) {
-		// Chot type uint8 3 kenh để tao tensor ONNX don gian va on định.
+        // Chốt type uint8 3 kênh để tạo tensor ONNX đơn giản và ổn định.
         resized.convertTo(resized, CV_8UC3);
     }
     if (!resized.isContinuous()) {
-		// Clone để dam bao bộ nhớ liên tục cho memcpy vào tensor.
+        // Clone để đảm bảo bộ nhớ liên tục cho memcpy vào tensor.
         resized = resized.clone();
     }
     return resized;
 }
 
 cv::Mat ReadAndPreprocessImageRgbU8Hwc(const std::filesystem::path& image_path, int target_w, int target_h) {
-	// Đọc anh mau tu dia bang OpenCV (mac định la BGR).
+    // Đọc ảnh màu từ đĩa bằng OpenCV (mặc định là BGR).
     cv::Mat bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
     if (bgr.empty()) {
         throw std::runtime_error("Không đọc được ảnh: " + image_path.string());

@@ -12,7 +12,7 @@ namespace ocr_report {
 
 ConfidenceSummary SummarizeTimesteps(const std::vector<float>& conf, size_t expected_timesteps) {
 	ConfidenceSummary s;
-	// T: so timestep se được dua vào thống kê (tối đa bang expected_timesteps).
+	// T: số timestep sẽ được đưa vào thống kê (tối đa bằng expected_timesteps).
 	const size_t T = std::min(expected_timesteps, conf.size());
 	s.used_timesteps = T;
 	if (T == 0) {
@@ -20,7 +20,7 @@ ConfidenceSummary SummarizeTimesteps(const std::vector<float>& conf, size_t expe
 		return s;
 	}
 	double sum = 0.0;
-	// Cong confidence tren T timestep dau để tinh trung binh.
+	// Cộng confidence trên T timestep đầu để tính trung bình.
 	for (size_t t = 0; t < T; ++t) sum += conf[t];
 	s.avg = sum / static_cast<double>(T);
 	return s;
@@ -37,16 +37,16 @@ void PrintResult(
 	os << "Bịển số: " << decoded << "\n";
 	os << std::fixed << std::setprecision(4);
 
-	// s gom thong tin tong hop confidence để in mot dong report ngan gon.
+	// s gồm thông tin tổng hợp confidence để in một dòng report ngắn gọn.
 	const auto s = SummarizeTimesteps(conf, expected_timesteps);
 	os << "Conf(avg_T=" << s.used_timesteps << ", softmax_top1): " << s.avg << "\n";
 
-	// T la so timestep se in chi tiet (co gioi han để tranh vuot dữ liệu).
+	// T là số timestep sẽ in chi tiết (có giới hạn để tránh vượt dữ liệu).
 	const size_t T = s.used_timesteps;
 	if (T > 0 && indices.size() >= T && conf.size() >= T) {
 		os << "Timestep conf (9 ký tự): ";
 		for (size_t t = 0; t < T; ++t) {
-			// idx: class du doan tai timestep t, dùng để map ra ký tự.
+			// idx: class dự đoán tại timestep t, dùng để map ra ký tự.
 			const int64_t idx = indices[t];
 			char ch = '?';
 			if (idx >= 0 && idx < static_cast<int64_t>(alphabet.size())) {

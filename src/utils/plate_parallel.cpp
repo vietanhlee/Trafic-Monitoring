@@ -17,8 +17,8 @@
 
 namespace {
 
-// Chia viec theo kieu "work stealing" don gian: moi worker lấy index tiep theo
-// bang atomic để cần bang tai khi moi crop co do phuc tap khac nhau.
+// Chia việc theo kiểu "work stealing" đơn giản: mỗi worker lấy index tiếp theo
+// bằng atomic để cân bằng tải khi mỗi crop có độ phức tạp khác nhau.
 template <typename Fn>
 void ParallelForEach(
 	size_t item_count,
@@ -57,7 +57,7 @@ void ParallelForEach(
 }
 
 cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
-	// Clamp tọa độ để dam bao crop không vuot mien anh xe.
+	// Clamp tọa độ để đảm bảo crop không vượt miền ảnh xe.
 	int ix1 = std::max(0, std::min(static_cast<int>(std::floor(x1)), w - 1));
 	int iy1 = std::max(0, std::min(static_cast<int>(std::floor(y1)), h - 1));
 	int ix2 = std::max(0, std::min(static_cast<int>(std::ceil(x2)), w - 1));
@@ -81,13 +81,13 @@ std::vector<std::vector<yolo_detector::Detection>> DetectPlatesPerVehicleParalle
 		return plates_per_vehicle;
 	}
 
-	// Nghiep vu: detect bịển số tren TUNG crop phương tiện, nhung xu ly da luong
-	// o tang ngoai để giảm tong độ trễ khi co nhiều xe trong 1 frame.
+	// Nghiệp vụ: detect biển số trên TỪNG crop phương tiện, nhưng xử lý đa luồng
+	// ở tầng ngoài để giảm tổng độ trễ khi có nhiều xe trong 1 frame.
 	ParallelForEach(
 		vehicle_crops.size(),
 		app_config::kPlateDetectMaxWorkers,
 		[&](size_t i) {
-			// Moi crop xe chạy detect đọc lap; output luu theo index xe tương ứng.
+			// Mỗi crop xe chạy detect độc lập; output lưu theo index xe tương ứng.
 			plates_per_vehicle[i] = yolo_detector::RunSingle(
 				plate_sess,
 				vehicle_crops[i],
@@ -104,7 +104,7 @@ std::vector<PlateCandidate> BuildPlateCandidatesParallel(
 	float min_plate_score) {
 	std::vector<std::vector<PlateCandidate>> candidates_per_vehicle(plates_per_vehicle.size());
 
-	// Cong viec nay CPU-bound, chi cần so worker vua phai để tranh tao qua nhiều thread.
+	// Công việc này CPU-bound, chỉ cần số worker vừa phải để tránh tạo quá nhiều thread.
 	ParallelForEach(
 		plates_per_vehicle.size(),
 		app_config::kPlateDetectMaxWorkers,
@@ -112,12 +112,12 @@ std::vector<PlateCandidate> BuildPlateCandidatesParallel(
 			const auto& dets = plates_per_vehicle[i];
 			auto& out = candidates_per_vehicle[i];
 
-			// Nghiep vu: moi xe tối đa 1 bịển số.
+			// Nghiệp vụ: mỗi xe tối đa 1 biển số.
 			// Trong no-NMS mode, dets da được sort giảm dần theo score,
-			// vi vay chi cần lấy detection hop le dau tien (top-1) roi dùng.
+			// vì vậy chỉ cần lấy detection hợp lệ đầu tiên (top-1) rồi dùng.
 			for (const auto& p : dets) {
 				if (p.score < min_plate_score) {
-					// Cat ngưỡng score som để giảm cong viec crop/preprocess OCR.
+					// Cắt ngưỡng score sớm để giảm công việc crop/preprocess OCR.
 					continue;
 				}
 				cv::Rect pr_local = ToRectClamped(
@@ -147,7 +147,7 @@ std::vector<PlateCandidate> BuildPlateCandidatesParallel(
 	}
 	candidates.reserve(total);
 	for (auto& per_vehicle : candidates_per_vehicle) {
-		// Flatten kết quả tương ứng thứ tự vehicle_index ban dau.
+		// Flatten kết quả tương ứng thứ tự vehicle_index ban đầu.
 		for (auto& c : per_vehicle) {
 			candidates.push_back(std::move(c));
 		}
@@ -165,14 +165,14 @@ std::vector<cv::Mat> PreprocessPlatesParallel(
 		return plate_rgb_ocr;
 	}
 
-	// Preprocess OCR la buoc memory-bound, gioi han worker để giảm context switch.
+	// Preprocess OCR là bước memory-bound, giới hạn worker để giảm context switch.
 	ParallelForEach(
 		candidates.size(),
 		app_config::kPlateDetectMaxWorkers,
 		[&](size_t i) {
 			const auto& c = candidates[i];
 			const cv::Mat& vehicle_bgr = vehicle_crops[c.vehicle_index];
-			// Crop theo bbox bịển số trong crop xe, sau đó chuyen thanh RGB uint8 HWC cho OCR.
+			// Crop theo bbox biển số trong crop xe, sau đó chuyển thành RGB uint8 HWC cho OCR.
 			cv::Mat plate_bgr = vehicle_bgr(c.plate_rect_in_vehicle);
 			plate_rgb_ocr[i] = image_preprocess::PreprocessMatRgbU8Hwc(plate_bgr, out_w, out_h);
 		});
