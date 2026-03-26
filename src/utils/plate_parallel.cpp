@@ -14,6 +14,7 @@
 #include "ocrplate/core/app_config.h"
 #include "ocrplate/utils/image_preprocess.h"
 #include "ocrplate/utils/parallel_utils.h"
+#include "ocrplate/utils/rect_utils.h"
 
 namespace {
 
@@ -54,17 +55,6 @@ void ParallelForEach(
 	for (auto& t : workers) {
 		t.join();
 	}
-}
-
-cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
-	// Clamp tọa độ để đảm bảo crop không vượt miền ảnh xe.
-	int ix1 = std::max(0, std::min(static_cast<int>(std::floor(x1)), w - 1));
-	int iy1 = std::max(0, std::min(static_cast<int>(std::floor(y1)), h - 1));
-	int ix2 = std::max(0, std::min(static_cast<int>(std::ceil(x2)), w - 1));
-	int iy2 = std::max(0, std::min(static_cast<int>(std::ceil(y2)), h - 1));
-	int rw = std::max(0, ix2 - ix1);
-	int rh = std::max(0, iy2 - iy1);
-	return cv::Rect(ix1, iy1, rw, rh);
 }
 
 } // namespace
@@ -120,7 +110,7 @@ std::vector<PlateCandidate> BuildPlateCandidatesParallel(
 					// Cắt ngưỡng score sớm để giảm công việc crop/preprocess OCR.
 					continue;
 				}
-				cv::Rect pr_local = ToRectClamped(
+				cv::Rect pr_local = rect_utils::ToRectClamped(
 					p.x1,
 					p.y1,
 					p.x2,
