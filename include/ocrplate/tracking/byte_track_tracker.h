@@ -53,12 +53,12 @@ struct TrackState {
 
 class ByteTrackTracker {
 public:
-	// Khoi tao tracker voi bo tham số ghep noi va vong doi track.
+	// Khởi tạo tracker với bộ tham số ghép nối và vòng đời track.
 	// - iou_threshold: ngưỡng IoU cho stage 1 (high-score detections).
-	// - max_missed_frames: so frame tối đa cho phep track confirmed bị mất trước khi xóa.
-	// - min_confirmed_hits: so hit tới thieu để track được xem la confirmed.
+	// - max_missed_frames: số frame tối đa cho phép track confirmed bị mất trước khi xóa.
+	// - min_confirmed_hits: số hit tối thiểu để track được xem là confirmed.
 	// - high_score_threshold: ngưỡng tach nhom detection high.
-	// - low_score_threshold: ngưỡng duoi cua nhom detection low để cuu track.
+	// - low_score_threshold: ngưỡng dưới của nhóm detection low để cứu track.
 	// - iou_threshold_low: ngưỡng IoU cho stage 2 (match low-score).
 	ByteTrackTracker(
 		float iou_threshold,
@@ -68,22 +68,22 @@ public:
 		float low_score_threshold = 0.0f,
 		float iou_threshold_low = 0.0f);
 
-	// Tien tracker len 1 frame thời gian thuc (predict-only).
-	// Cần gọi o moi frame video, ke ca frame không chạy detector,
-	// để mở hinh van toc va missed_count phan anh dùng nhip thời gian.
+	// Tiến tracker lên 1 frame thời gian thực (predict-only).
+	// Cần gọi ở mỗi frame video, kể cả frame không chạy detector,
+	// để mô hình vận tốc và missed_count phản ánh đúng nhịp thời gian.
 	void AdvanceFrame();
 
-	// Cap nhất tracker bang detections frame hiện tại.
-	// Đầu ra la mang track_id theo cung thứ tự detections đầu vào:
-	// - track_id >= 1: detection da được gan vào mot track.
-	// - -1: detection không được gan track hop le.
+	// Cập nhật tracker bằng detections frame hiện tại.
+	// Đầu ra là mảng track_id theo cùng thứ tự detections đầu vào:
+	// - track_id >= 1: detection đã được gán vào một track.
+	// - -1: detection không được gán track hợp lệ.
 	std::vector<int> Update(const std::vector<yolo_detector::Detection>& detections);
 
-	// Xóa toàn bộ trang thai noi bo va reset bo dem ID về trang thai ban dau.
+	// Xóa toàn bộ trạng thái nội bộ và reset bộ đếm ID về trạng thái ban đầu.
 	void Reset();
 
-	// Lấy danh sach track hiện co (chi đọc).
-	// Huu ich cho debug, overlay va thống kê.
+	// Lấy danh sách track hiện có (chỉ đọc).
+	// Hữu ích cho debug, overlay và thống kê.
 	const std::vector<TrackState>& GetTracks() const { return tracks_; }
 
 private:

@@ -78,43 +78,43 @@ public:
 	bool HasBrandAccepted(int track_id) const;
 	// Kiểm tra track đã giải quyết brand (accepted hoặc forced_unknown) hay chưa.
 	bool HasBrandResolved(int track_id) const;
-	// Kiểm tra track da co plate chap nhan hay chưa.
+	// Kiểm tra track đã có plate chấp nhận hay chưa.
 	bool HasPlateAccepted(int track_id) const;
-	// Kiểm tra track da du dieu kien identified hay chưa.
+	// Kiểm tra track đã đủ điều kiện identified hay chưa.
 	bool IsIdentified(int track_id) const;
-	// Kiểm tra track da complete hay chưa.
+	// Kiểm tra track đã complete hay chưa.
 	bool IsComplete(int track_id) const;
 
-	// Lấy con tro read-only den ban ghi theo track_id, nullptr nếu không ton tai.
+	// Lấy con trỏ read-only đến bản ghi theo track_id, nullptr nếu không tồn tại.
 	const VehicleIdentity* Get(int track_id) const;
-	// Lấy snapshot toàn bộ ban ghi để dump report/log.
+	// Lấy snapshot toàn bộ bản ghi để dump report/log.
 	std::vector<VehicleIdentity> Snapshot() const;
 
 private:
-	// Dam bao ban ghi ton tai cho track_id va tra về tham chieu để cap nhất.
+	// Đảm bảo bản ghi tồn tại cho track_id và trả về tham chiếu để cập nhật.
 	VehicleIdentity& Ensure(int track_id);
-	// Tim ban ghi theo track_id (read-only), nullptr nếu không co.
+	// Tìm bản ghi theo track_id (read-only), nullptr nếu không có.
 	const VehicleIdentity* Find(int track_id) const;
 
-	// Ngưỡng chap nhan confidence cho brand.
+	// Ngưỡng chấp nhận confidence cho brand.
 	float brand_accept_threshold_ = 0.8f;
-	// So lan thu tối đa cho brand trước khi force unknown.
+	// Số lần thử tối đa cho brand trước khi force unknown.
 	int brand_max_attempts_ = 3;
-	// Ngưỡng chap nhan confidence OCR cho plate.
+	// Ngưỡng chấp nhận confidence OCR cho plate.
 	float plate_ocr_accept_threshold_ = 0.8f;
-	// So lan detect plate that bai tối đa trước khi force no_plate.
+	// Số lần detect plate thất bại tối đa trước khi force no_plate.
 	int plate_max_detect_attempts_ = 3;
-	// So lan OCR plate that bai tối đa trước khi force unknown.
+	// Số lần OCR plate thất bại tối đa trước khi force unknown.
 	int plate_max_ocr_attempts_ = 3;
-	// Chuoi fallback khi OCR that bai qua ngưỡng.
+	// Chuỗi fallback khi OCR thất bại quá ngưỡng.
 	std::string plate_unknown_text_ = "unknown";
-	// Chuoi fallback khi detect plate that bai qua ngưỡng.
+	// Chuỗi fallback khi detect plate thất bại quá ngưỡng.
 	std::string plate_no_plate_text_ = "no_plate";
-	// Gioi han duoi do dai bịển số hop le.
+	// Giới hạn dưới độ dài biển số hợp lệ.
 	int plate_min_length_ = 0;
-	// Gioi han tren do dai bịển số hop le.
+	// Giới hạn trên độ dài biển số hợp lệ.
 	int plate_max_length_ = 999;
-	// Bang luu danh tinh theo track_id.
+	// Bảng lưu danh tính theo track_id.
 	std::unordered_map<int, VehicleIdentity> identities_;
 };
 
