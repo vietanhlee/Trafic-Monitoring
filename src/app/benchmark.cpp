@@ -22,6 +22,7 @@
 #include "ocrplate/pipeline/frame_annotator.h"
 #include "ocrplate/services/ocr_batch.h"
 #include "ocrplate/utils/plate_parallel.h"
+#include "ocrplate/utils/rect_utils.h"
 #include "ocrplate/services/yolo_detector.h"
 
 namespace fs = std::filesystem;
@@ -89,9 +90,6 @@ struct BrandBranchResult {
 	double classify_ms = 0.0;
 };
 
-// Chuẩn hóa bbox về miền ảnh hợp lệ để crop an toàn.
-cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h);
-
 // In hướng dẫn sử dụng benchmark.
 void PrintUsage(const char* prog) {
 	std::cout
@@ -144,17 +142,6 @@ BenchmarkOptions ParseArgs(int argc, char** argv) {
 	return opt;
 }
 
-// Chuyển bbox float sang Rect đã clamp biên.
-cv::Rect ToRectClamped(float x1, float y1, float x2, float y2, int w, int h) {
-	int ix1 = std::max(0, std::min(static_cast<int>(std::floor(x1)), w - 1));
-	int iy1 = std::max(0, std::min(static_cast<int>(std::floor(y1)), h - 1));
-	int ix2 = std::max(0, std::min(static_cast<int>(std::ceil(x2)), w - 1));
-	int iy2 = std::max(0, std::min(static_cast<int>(std::ceil(y2)), h - 1));
-	int rw = std::max(0, ix2 - ix1);
-	int rh = std::max(0, iy2 - iy1);
-	return cv::Rect(ix1, iy1, rw, rh);
-}
-
 // Tính thời gian mili-giây giữa 2 mốc thời gian.
 double ElapsedMs(const std::chrono::steady_clock::time_point& t0, const std::chrono::steady_clock::time_point& t1) {
 	return std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -190,7 +177,7 @@ StageMetrics RunPipelineOnce(
 	vehicle_rects.reserve(vehicles.size());
 	vehicles_used.reserve(vehicles.size());
 	for (const auto& v : vehicles) {
-		cv::Rect r = ToRectClamped(v.x1, v.y1, v.x2, v.y2, bgr.cols, bgr.rows);
+		cv::Rect r = rect_utils::ToRectClamped(v.x1, v.y1, v.x2, v.y2, bgr.cols, bgr.rows);
 		if (r.width <= 2 || r.height <= 2) {
 			continue;
 		}
