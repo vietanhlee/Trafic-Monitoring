@@ -12,7 +12,7 @@ namespace vehicle_identity_store {
 namespace {
 
 bool HasUnderscoreOnlyAtEnd(const std::string& plate_text) {
-	// Chap nhan chuoi co '_' chi o cuoi (padding), không chap nhan '_' xen giua.
+	// Chấp nhận chuỗi có '_' chỉ ở cuối (padding), không chấp nhận '_' xen giữa.
 	const size_t first_underscore = plate_text.find('_');
 	if (first_underscore == std::string::npos) {
 		return true;
@@ -26,7 +26,7 @@ bool HasUnderscoreOnlyAtEnd(const std::string& plate_text) {
 }
 
 std::string TrimTrailingUnderscore(std::string plate_text) {
-	// Bo ký tự padding o cuoi để lấy text bịển số thuc.
+	// Bỏ ký tự padding ở cuối để lấy text biển số thực.
 	while (!plate_text.empty() && plate_text.back() == '_') {
 		plate_text.pop_back();
 	}
@@ -86,7 +86,7 @@ VehicleIdentity& VehicleIdentityStore::Ensure(int track_id) {
 		return it->second;
 	}
 	VehicleIdentity fresh;
-	// Tao moi record identity khi track_id xuat hiện lan dau.
+	// Tạo mới record identity khi track_id xuất hiện lần đầu.
 	fresh.track_id = track_id;
 	auto inserted = identities_.emplace(track_id, std::move(fresh));
 	return inserted.first->second;
@@ -106,7 +106,7 @@ void VehicleIdentityStore::UpdateBrand(int track_id, int brand_id, float brand_c
 	}
 	VehicleIdentity& one = Ensure(track_id);
 	if (one.brand_accepted || one.brand_forced_unknown) {
-		// Da chap nhan brand hoặc het budget thi khoa kết quả, không ghi để.
+		// Đã chấp nhận brand hoặc hết budget thì khóa kết quả, không ghi đè.
 		return;
 	}
 
@@ -120,7 +120,7 @@ void VehicleIdentityStore::UpdateBrand(int track_id, int brand_id, float brand_c
 	}
 
 	if (one.brand_attempts >= brand_max_attempts_) {
-		// Het budget predict brand: khoa lai để frame sau không classify nua.
+		// Hết budget predict brand: khóa lại để frame sau không classify nữa.
 		one.brand_forced_unknown = true;
 	}
 }
@@ -131,17 +131,17 @@ void VehicleIdentityStore::UpdatePlate(int track_id, const std::string& plate_te
 	}
 	VehicleIdentity& one = Ensure(track_id);
 	if (one.plate_accepted) {
-		// Da chap nhan plate (hoặc forced unknown) thi bỏ qua lan cap nhất tiep.
+		// Đã chấp nhận plate (hoặc forced unknown) thì bỏ qua lần cập nhật tiếp.
 		return;
 	}
 
-	// Mỗi lần gọi UpdatePlate được xem la 1 lan da đọc OCR plate cho track nay.
+	// Mỗi lần gọi UpdatePlate được xem là 1 lần đã đọc OCR plate cho track này.
 	++one.plate_ocr_attempts;
 
 	bool accepted = false;
 	std::string normalized_plate_text;
 	if (!plate_text.empty() && HasUnderscoreOnlyAtEnd(plate_text)) {
-		// Chuan hoa text OCR trước khi kiểm tra do dai/ngưỡng conf.
+		// Chuẩn hóa text OCR trước khi kiểm tra độ dài/ngưỡng conf.
 		normalized_plate_text = TrimTrailingUnderscore(plate_text);
 		if (!normalized_plate_text.empty()) {
 			const int plate_len = static_cast<int>(normalized_plate_text.size());
@@ -152,7 +152,7 @@ void VehicleIdentityStore::UpdatePlate(int track_id, const std::string& plate_te
 	}
 
 	if (accepted) {
-		// Khi dat dieu kien, dong bang kết quả bịển số cho track nay.
+		// Khi đạt điều kiện, đóng băng kết quả biển số cho track này.
 		one.plate_accepted = true;
 		one.plate_forced_unknown = false;
 		one.plate_forced_no_plate = false;
@@ -162,9 +162,9 @@ void VehicleIdentityStore::UpdatePlate(int track_id, const std::string& plate_te
 		return;
 	}
 
-	// Vuot budget OCR ma van không chap nhan được -> khoa unknown.
+	// Vượt budget OCR mà vẫn không chấp nhận được -> khóa unknown.
 	if (one.plate_ocr_attempts >= plate_max_ocr_attempts_) {
-		// Het budget OCR: danh dau unknown để ket thuc qua trinh tim bịển số.
+		// Hết budget OCR: đánh dấu unknown để kết thúc quá trình tìm biển số.
 		one.plate_accepted = true;
 		one.plate_forced_unknown = true;
 		one.plate_forced_no_plate = false;
@@ -185,7 +185,7 @@ void VehicleIdentityStore::MarkPlateMiss(int track_id) {
 
 	++one.plate_detect_attempts;
 	if (one.plate_detect_attempts >= plate_max_detect_attempts_) {
-		// Het budget detect: khoa plate=no_plate va bỏ qua detect/oCR tu frame sau.
+		// Hết budget detect: khóa plate=no_plate và bỏ qua detect/OCR từ frame sau.
 		one.plate_accepted = true;
 		one.plate_forced_unknown = false;
 		one.plate_forced_no_plate = true;

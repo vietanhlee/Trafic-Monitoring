@@ -324,11 +324,11 @@ ByteTrackTracker::ByteTrackTracker(
 	}
 }
 
-// Tiến tới 1 frame thời gian cho tắt ca track (predict-only).
+// Tiến tới 1 frame thời gian cho tất cả track (predict-only).
 void ByteTrackTracker::AdvanceFrame() {
 	++frame_index_;
 	for (auto& t : tracks_) {
-		// Tang khoang cach thời gian tu lan update gan nhất, sau đó predict vi tri moi.
+		// Tăng khoảng cách thời gian từ lần update gần nhất, sau đó predict vị trí mới.
 		t.frames_since_update += 1;
 		PredictOneFrame(t);
 	}
@@ -345,10 +345,10 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 	for (size_t i = 0; i < detections.size(); ++i) {
 		const float s = detections[i].score;
 		if (s >= high_score_threshold_) {
-			// Nhóm tin cay cao: ưu tiên match o stage đầu.
+			// Nhóm tin cậy cao: ưu tiên match ở stage đầu.
 			high_det_indices.push_back(i);
 		} else if (s >= low_score_threshold_) {
-			// Nhóm tin cay thấp: dùng o stage cuu track da ton tai.
+			// Nhóm tin cậy thấp: dùng ở stage cứu track đã tồn tại.
 			low_det_indices.push_back(i);
 		}
 	}
@@ -383,7 +383,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 
 	auto mark_match = [&](size_t track_idx, size_t det_idx) {
 		TrackState& t = tracks_[track_idx];
-		// Match thanh cong: cập nhật trạng thái va gan track_id cho detection.
+		// Match thành công: cập nhật trạng thái và gán track_id cho detection.
 		UpdateWithMeasurement(t, detections[det_idx]);
 		t.hit_count += 1;
 		t.missed_count = 0;
@@ -417,7 +417,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 		}
 	}
 	const float unconfirmed_iou_thr = std::min(0.80f, iou_threshold_ + 0.05f);
-	// Track chưa confirm cần IoU chat hon để tranh nhay ID som.
+	// Track chưa confirm cần IoU chặt hơn để tránh nhảy ID sớm.
 	AssignmentResult stage1b = AssignTracksToDets(unconfirmed_tracks, high_remaining, tracks_, detections, unconfirmed_iou_thr);
 	for (const auto& m : stage1b.matches) {
 		const size_t track_idx = unconfirmed_tracks[m.first];
@@ -458,7 +458,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 			continue;
 		}
 		TrackState t;
-		// Track moi tao tu detection score cao se được uu tien giu lai.
+		// Track mới tạo từ detection score cao sẽ được ưu tiên giữ lại.
 		t.track_id = next_track_id_++;
 		InitializeTrackState(t, detections[di]);
 		t.hit_count = 1;
@@ -470,8 +470,8 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 		det_taken[di] = true;
 	}
 
-	// Không tao track moi tu low-score detection.
-	// ByteTrack goc chi khoi tao track tu nhom score cao để giảm ID churn.
+	// Không tạo track mới từ low-score detection.
+	// ByteTrack gốc chỉ khởi tạo track từ nhóm score cao để giảm ID churn.
 
 	// Mark missed tracks and prune.
 	for (size_t ti = 0; ti < tracks_.size(); ++ti) {
@@ -486,7 +486,7 @@ std::vector<int> ByteTrackTracker::Update(const std::vector<yolo_detector::Detec
 			tracks_.begin(),
 			tracks_.end(),
 			[&](const TrackState& t) {
-				// Cho unconfirmed track mot khoang grace nho để tranh mất ID do miss ngan han.
+				// Cho unconfirmed track một khoảng grace nhỏ để tránh mất ID do miss ngắn hạn.
 				if (!t.is_confirmed) {
 					const int unconfirmed_grace = std::max(2, max_missed_frames_ / 4);
 					return t.missed_count > unconfirmed_grace;
